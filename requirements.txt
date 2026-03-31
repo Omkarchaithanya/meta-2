@@ -1,0 +1,39 @@
+# OpenEnv SME Negotiation Framework - Pinned Dependencies
+# All versions locked for production reproducibility
+
+# Core RL & Gymnasium
+gymnasium==0.29.1
+numpy==1.26.4
+
+# FastAPI & WebSocket
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+websockets==12.0
+python-multipart==0.0.6
+
+#Data Validation (Pydantic v2)
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# HuggingFace Ecosystem
+transformers==4.41.0
+torch==2.3.0
+huggingface-hub==0.23.0
+trl==0.8.6
+bitsandbytes==0.43.0
+
+# Async & HTTP
+httpx==0.27.0
+aiofiles==23.2.1
+
+# Utilities
+python-dotenv==1.0.1
+pyyaml==6.0.1
+
+# Development & Testing (optional)
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+black==24.3.0
+ruff==0.3.5
+mypy==1.10.0
