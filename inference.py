@@ -5,9 +5,10 @@ Demonstrates agent learning through the OpenEnv SME environment.
 
 Uses OpenAI GPT-4 to negotiate B2B contracts optimally.
 Required environment variables:
-  - OPENAI_API_KEY: Your OpenAI API key
+    - OPENAI_API_KEY: Your OpenAI API key (or leave empty and use HF_TOKEN)
   - API_BASE_URL: Server URL (default: http://localhost:8000)
   - MODEL_NAME: Model to use (default: gpt-4o)
+    - LLM_BASE_URL: Optional OpenAI-compatible model endpoint URL
 """
 
 import os
@@ -18,22 +19,63 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 import httpx
 from dataclasses import dataclass
+from dotenv import load_dotenv
 
 from openai import AsyncOpenAI, OpenAI
+
+# Auto-load variables from project root .env file if present.
+load_dotenv()
 
 # Configuration from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+HF_ROUTER_BASE_URL = os.getenv("HF_ROUTER_BASE_URL", "https://router.huggingface.co/v1")
+HF_MODEL_NAME = os.getenv("HF_MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
 
-# Validation
-if not OPENAI_API_KEY:
-    print("ERROR: OPENAI_API_KEY environment variable not set")
-    sys.exit(1)
+# Choose provider/token deterministically to avoid auth mismatches.
+if LLM_BASE_URL:
+    llm_base_lower = LLM_BASE_URL.lower()
+    if "huggingface" in llm_base_lower:
+        if not HF_TOKEN:
+            print("ERROR: LLM_BASE_URL points to Hugging Face but HF_TOKEN is not set")
+            sys.exit(1)
+        API_TOKEN = HF_TOKEN
+        ACTIVE_MODEL = HF_MODEL_NAME or MODEL_NAME
+        client = OpenAI(api_key=API_TOKEN, base_url=LLM_BASE_URL)
+        ACTIVE_PROVIDER = "huggingface"
+    else:
+        if not OPENAI_API_KEY:
+            print("ERROR: Non-HF LLM_BASE_URL requires OPENAI_API_KEY")
+            sys.exit(1)
+        API_TOKEN = OPENAI_API_KEY
+        ACTIVE_MODEL = MODEL_NAME
+        client = OpenAI(api_key=API_TOKEN, base_url=LLM_BASE_URL)
+        ACTIVE_PROVIDER = "custom-openai-compatible"
+else:
+    # No explicit LLM base URL: prefer OpenAI, else default to HF router.
+    if OPENAI_API_KEY:
+        API_TOKEN = OPENAI_API_KEY
+        ACTIVE_MODEL = MODEL_NAME
+        client = OpenAI(api_key=API_TOKEN)
+        ACTIVE_PROVIDER = "openai"
+    elif HF_TOKEN:
+        API_TOKEN = HF_TOKEN
+        ACTIVE_MODEL = HF_MODEL_NAME or MODEL_NAME
+        client = OpenAI(api_key=API_TOKEN, base_url=HF_ROUTER_BASE_URL)
+        ACTIVE_PROVIDER = "huggingface"
+    else:
+        print("ERROR: Set OPENAI_API_KEY or HF_TOKEN in your environment/.env file")
+        sys.exit(1)
 
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Secondary failover client: if OpenAI key hits quota and HF token exists, retry via HF router.
+hf_fallback_client = None
+if HF_TOKEN:
+    # Avoid creating duplicate client when primary is already HF router/custom HF base URL.
+    if not LLM_BASE_URL or "huggingface" not in LLM_BASE_URL.lower():
+        hf_fallback_client = OpenAI(api_key=HF_TOKEN, base_url=HF_ROUTER_BASE_URL)
 
 
 @dataclass
@@ -55,6 +97,62 @@ class SMENegotiationAgent:
         self.server_url = server_url
         self.client = httpx.Client(timeout=30.0)
         self.conversation_history = []
+        self.hf_fallback_disabled = False
+        self.llm_disabled = False
+        self.llm_disabled_reason = ""
+
+    def heuristic_action(self, state: Dict[str, Any], task_id: str) -> Dict:
+        """Deterministic heuristic policy used when remote LLM is unavailable."""
+        price = float(state.get("p_opp", 95.0))
+        days = int(state.get("d_opp", 30))
+        cost = float(state.get("c_sme", 80.0))
+        round_idx = int(state.get("t_elapsed", 0))
+        max_rounds = max(1, int(state.get("t_max", 8)))
+        liquidity_limit = int(state.get("l_sme", 60))
+
+        # Accept late-round profitable offers when they are liquidity-safe,
+        # or can be made liquidity-safe using TReDS on medium/hard tasks.
+        if round_idx >= max_rounds - 3 and price >= cost * 1.02:
+            can_accept_direct = days <= liquidity_limit
+            can_accept_with_treds = task_id in {"medium", "hard"} and days <= 120
+            if can_accept_direct or can_accept_with_treds:
+                use_treds = bool(can_accept_with_treds and days > liquidity_limit)
+                return {
+                    "action_type": "ACCEPT",
+                    "proposed_price": price,
+                    "proposed_days": days,
+                    "request_treds": use_treds,
+                    "justification": "Heuristic accept: profitable and liquidity-feasible"
+                }
+
+        # For hard task, early explicit TReDS restructuring helps unlock utility.
+        if task_id == "hard" and round_idx <= 2 and price >= cost * 1.01:
+            return {
+                "action_type": "PROPOSE",
+                "proposed_price": round(max(cost * 1.03, price * 0.97), 2),
+                "proposed_days": min(days, 60),
+                "request_treds": True,
+                "justification": "Heuristic TReDS restructuring to manage long payment cycle"
+            }
+
+        # Conservative counter-offer with slight concessions over time.
+        concession = min(0.15, 0.02 * (round_idx + 1))
+        target_price = max(cost * 1.02, price * (1.0 - concession))
+        target_days = days
+        use_treds = False
+
+        if task_id in {"medium", "hard"}:
+            target_days = min(days, 45 if task_id == "medium" else 60)
+            if days > liquidity_limit:
+                use_treds = True
+
+        return {
+            "action_type": "PROPOSE",
+            "proposed_price": round(target_price, 2),
+            "proposed_days": int(max(1, min(365, target_days))),
+            "request_treds": use_treds,
+            "justification": "Heuristic counter-offer for stable progression"
+        }
     
     def build_system_prompt(self, task_id: str) -> str:
         """Build task-specific system prompt."""
@@ -130,10 +228,11 @@ JSON response only:"""
         """Reset environment for new episode."""
         response = self.client.post(
             f"{self.server_url}/reset",
-            json={"task_id": task_id, "seed": seed}
+            params={"task_id": task_id, "seed": seed}
         )
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        return payload.get("state", payload)
     
     def step_episode(self, action: Dict) -> Dict:
         """Step environment with action."""
@@ -142,13 +241,21 @@ JSON response only:"""
             json=action
         )
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        # Keep backward compatibility with alternate field names.
+        if "done" in payload and "terminated" not in payload:
+            payload["terminated"] = payload.get("done", False)
+        return payload
     
-    def get_llm_action(self, system_prompt: str, user_prompt: str) -> Dict:
+    def get_llm_action(self, system_prompt: str, user_prompt: str, state: Dict[str, Any], task_id: str) -> Dict:
         """Get action from OpenAI LLM."""
+        if self.llm_disabled:
+            return self.heuristic_action(state, task_id)
+
+        content = ""
         try:
             response = client.chat.completions.create(
-                model=MODEL_NAME,
+                model=ACTIVE_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -161,27 +268,105 @@ JSON response only:"""
             
             # Parse JSON action
             action_dict = json.loads(content)
-            return action_dict
+            return self.normalize_action(action_dict, state, task_id)
         
         except json.JSONDecodeError:
             print(f"Failed to parse LLM response: {content}")
-            # Return safe fallback
-            return {
-                "action_type": "PROPOSE",
-                "proposed_price": 95,
-                "proposed_days": 30,
-                "request_treds": False,
-                "justification": "Fallback action"
-            }
+            return self.normalize_action(self.heuristic_action(state, task_id), state, task_id)
         except Exception as e:
+            err_text = str(e)
+            # Auto-failover to HF when OpenAI quota is exhausted.
+            if (
+                hf_fallback_client is not None
+                and not self.hf_fallback_disabled
+                and (
+                "insufficient_quota" in err_text or "Error code: 429" in err_text
+                )
+            ):
+                try:
+                    print("LLM quota exhausted on primary provider. Retrying via Hugging Face Router...")
+                    response = hf_fallback_client.chat.completions.create(
+                        model=HF_MODEL_NAME,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=500
+                    )
+                    content = response.choices[0].message.content
+                    action_dict = json.loads(content)
+                    return action_dict
+                except Exception as hf_err:
+                    print(f"HF fallback also failed: {hf_err}")
+                    hf_err_text = str(hf_err)
+                    if (
+                        "model_not_found" in hf_err_text
+                        or "does not exist" in hf_err_text
+                        or "insufficient permissions" in hf_err_text
+                        or "Error code: 401" in hf_err_text
+                        or "Error code: 402" in hf_err_text
+                        or "Error code: 403" in hf_err_text
+                    ):
+                        self.hf_fallback_disabled = True
+                        print("HF fallback disabled for this run. Check HF_MODEL_NAME/token permissions.")
+
+            if (
+                "Error code: 401" in err_text
+                or "Error code: 402" in err_text
+                or "Error code: 403" in err_text
+                or "insufficient_quota" in err_text
+                or "Error code: 429" in err_text
+            ):
+                self.llm_disabled = True
+                self.llm_disabled_reason = err_text
+                print("Primary LLM disabled for this run due to provider auth/billing limits. Using heuristic policy.")
             print(f"LLM error: {e}")
-            return {
-                "action_type": "PROPOSE",
-                "proposed_price": 95,
-                "proposed_days": 30,
-                "request_treds": False,
-                "justification": "Error recovery"
-            }
+            return self.normalize_action(self.heuristic_action(state, task_id), state, task_id)
+
+    def normalize_action(self, action: Dict[str, Any], state: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+        """Safety layer to keep actions realistic and prevent self-sabotage."""
+        price = float(state.get("p_opp", 100.0))
+        days = int(state.get("d_opp", 30))
+        cost = float(state.get("c_sme", 80.0))
+        liquidity = int(state.get("l_sme", 60))
+
+        action_type = str(action.get("action_type", "PROPOSE")).upper()
+        proposed_price = float(action.get("proposed_price", price))
+        proposed_days = int(action.get("proposed_days", days))
+        request_treds = bool(action.get("request_treds", False))
+
+        # If current offer is already viable, don't reject it blindly.
+        if action_type == "REJECT":
+            if price >= cost * 1.02 and (days <= liquidity or task_id in {"medium", "hard"}):
+                action_type = "ACCEPT"
+                proposed_price = price
+                proposed_days = days
+                request_treds = days > liquidity and task_id in {"medium", "hard"}
+
+        # Keep proposals in a realistic band around current negotiation zone.
+        if action_type == "PROPOSE":
+            floor_price = max(cost * 1.01, price * 0.90)
+            ceil_price = price * 1.08
+            proposed_price = max(floor_price, min(ceil_price, proposed_price))
+
+            if task_id == "easy":
+                proposed_days = 30
+                request_treds = False
+            elif task_id == "medium":
+                proposed_days = max(30, min(60, proposed_days))
+            else:
+                proposed_days = max(30, min(90, proposed_days))
+                if proposed_days > liquidity:
+                    request_treds = True
+
+        return {
+            "action_type": action_type,
+            "proposed_price": round(proposed_price, 2),
+            "proposed_days": int(proposed_days),
+            "request_treds": request_treds,
+            "justification": action.get("justification", "Policy-normalized action")
+        }
     
     async def run_episode(self, task_id: str = "easy", seed: Optional[int] = None) -> Dict:
         """Run single episode and return score with visible step rewards."""
@@ -207,7 +392,7 @@ JSON response only:"""
             user_prompt = self.build_user_prompt(obs, step_count)
             
             # Get LLM action
-            action = self.get_llm_action(system_prompt, user_prompt)
+            action = self.get_llm_action(system_prompt, user_prompt, obs, task_id)
             
             print(f"📍 ROUND {step_count + 1}/{max_steps}")
             print(f"   Action: {action['action_type']:<12}", end="")

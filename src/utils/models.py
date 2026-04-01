@@ -41,6 +41,10 @@ class NegotiationTerms:
             self.days = self.final_days
         if self.volume is None and self.final_volume is not None:
             self.volume = self.final_volume
+
+    def model_dump(self) -> Dict[str, Any]:
+        """Pydantic-compatible model_dump method for serialization."""
+        return self.to_dict()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -76,6 +80,10 @@ class NegotiationAction:
     proposed_days: Optional[int] = None     # Proposed payment terms (days)
     request_treds: bool = False              # Request TReDS financing
     justification: Optional[str] = None      # Text justification
+
+    def model_dump(self) -> Dict[str, Any]:
+        """Pydantic-compatible model_dump method for serialization."""
+        return self.to_dict()
     
     def validate_action(self) -> Tuple[bool, str]:
         """
@@ -141,6 +149,10 @@ class OfferRecord:
     request_treds: bool
     justification: str
     party: str  # "buyer" or "sme"
+
+    def model_dump(self) -> Dict[str, Any]:
+        """Pydantic-compatible model_dump method for serialization."""
+        return self.to_dict()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -192,6 +204,10 @@ class NegotiationState:
     
     # Status
     done: bool = False
+
+    def model_dump(self) -> Dict[str, Any]:
+        """Pydantic-compatible model_dump method for serialization."""
+        return self.to_dict()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert state to dictionary for serialization."""
