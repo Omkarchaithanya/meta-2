@@ -207,7 +207,7 @@ class SMENegotiationEnv(Environment):
 			episode_seed=self.episode_seed,
 		)
 
-		_SESSION_STORE[episode_id] = {
+		_SESSION_STORE[episode_id or "default_session"] = {
 			"current_state": self.current_state,
 			"task_config": self.task_config,
 			"buyer_profile": self.buyer_profile,
@@ -243,8 +243,7 @@ class SMENegotiationEnv(Environment):
 			elif self.current_state is not None and self.current_state.task_id:
 				episode_id = f"{self.current_state.task_id}_{self.current_state.episode_seed}"
 			else:
-				raise ValueError("episode_id is required for step()")
-
+				episode_id = "default_session"
 		session_state = _SESSION_STORE.get(episode_id)
 		if session_state is None:
 			if self.current_state is not None and self.task_config is not None:
