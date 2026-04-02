@@ -121,7 +121,7 @@ files_required=(
     "src/env/sme_negotiation.py:SMENegotiationEnv class"
     "src/utils/grader.py:DeterministicGrader class"
     "src/utils/models.py:Pydantic type models"
-    "src/server.py:FastAPI server"
+    "src/app.py:FastAPI server factory"
     "client/env_client.py:AsyncEnvClient"
     "requirements.txt:Python dependencies"
 )
@@ -247,13 +247,13 @@ fi
 echo ""
 echo "━━━ CHECK 7: API Endpoints ━━━"
 endpoint_checks=(
-    "src/server.py:/health"
-    "src/server.py:/reset"
-    "src/server.py:/step"
-    "src/server.py:/state"
+    "src/app.py:/health"
+    "src/app.py:/reset"
+    "src/app.py:/step"
+    "src/app.py:/state"
 )
 
-if [ -f "src/server.py" ]; then
+if [ -f "src/app.py" ]; then
     for endpoint_spec in "${endpoint_checks[@]}"; do
         IFS=':' read -r filepath endpoint <<< "$endpoint_spec"
         if grep -q "\"$endpoint\"\|'$endpoint'" "$filepath"; then
@@ -263,7 +263,7 @@ if [ -f "src/server.py" ]; then
         fi
     done
 else
-    check_warn "src/server.py not found - cannot verify endpoints"
+    check_warn "src/app.py not found - cannot verify endpoints"
 fi
 
 # ============================================================================

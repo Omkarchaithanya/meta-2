@@ -17,4 +17,4 @@ if ($existing) {
 
 Write-Host "Starting OpenEnv server on http://127.0.0.1:$port ..."
 Set-Location $projectRoot
-python -m uvicorn src.server:app --host 127.0.0.1 --port $port
+python -m uvicorn src.app:app --host 127.0.0.1 --port $port

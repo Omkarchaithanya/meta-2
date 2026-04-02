@@ -1,3 +1,3 @@
 """Utilities initialization."""
 
-__all__ = ["models", "grader"]
+__all__ = ["models", "grader", "schemas"]

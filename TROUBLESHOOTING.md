@@ -93,7 +93,7 @@ python -c "from fastapi import FastAPI; print('✓ OK')"
 pip install fastapi==0.104.1 uvicorn==0.24.0
 
 # Run with verbose logging
-python -m uvicorn src.server:app --log-level debug
+python -m uvicorn src.app:app --log-level debug
 ```
 
 ---

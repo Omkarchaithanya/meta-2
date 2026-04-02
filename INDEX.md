@@ -60,7 +60,7 @@ Part 1: Run Baseline
 
 Part 2: Understanding the Environment
 ├── src/env/sme_negotiation.py  ← Core MDP environment
-├── src/server.py               ← FastAPI server
+├── src/app.py                  ← FastAPI server factory
 └── src/utils/grader.py         ← Score calculation
 
 Part 3: Testing
@@ -77,7 +77,7 @@ python inference.py
 # Start the game server
 make server
 # or
-python -m uvicorn src.server:app --reload
+python -m uvicorn src.app:app --reload
 
 # Run unit tests
 make test

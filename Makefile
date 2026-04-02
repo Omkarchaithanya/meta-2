@@ -67,7 +67,7 @@ clean:
 	rm -rf .mypy_cache/ .ruff_cache/
 
 server:
-	python -m uvicorn src.server:app --reload --port 8000
+	python -m uvicorn src.app:app --reload --port 8000
 
 examples:
 	python examples/01_basic_usage.py

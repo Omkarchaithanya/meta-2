@@ -18,7 +18,7 @@ echo ""
 
 # Run syntax check
 echo "[3] Checking syntax of all Python files..."
-python -m py_compile eval/run_eval.py client/env_client.py server/exploit_guard.py src/server.py src/env/sme_negotiation.py src/utils/models.py 2>&1 && echo "Syntax check: PASS" || echo "Syntax check: FAIL"
+python -m py_compile eval/run_eval.py client/env_client.py server/exploit_guard.py src/app.py src/env/sme_negotiation.py src/utils/models.py 2>&1 && echo "Syntax check: PASS" || echo "Syntax check: FAIL"
 echo ""
 
 # Run basic environment test

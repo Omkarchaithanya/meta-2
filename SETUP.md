@@ -52,7 +52,7 @@ set -a; source .env; set +a  # Bash with PowerShell
 In one terminal:
 
 ```bash
-python -m uvicorn src.server:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 You should see:
@@ -111,7 +111,7 @@ This will check:
 │   │   ├── models.py                # Pydantic schemas
 │   │   ├── grader.py                # Deterministic grader
 │   │   └── constants.py             # Task parameters
-│   └── server.py                    # FastAPI WebSocket server
+│   └── app.py                       # FastAPI server factory
 ├── eval/
 │   └── evaluation.py                # Evaluation framework
 ├── training/

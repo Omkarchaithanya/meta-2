@@ -229,7 +229,7 @@ else:
 ### Local Development
 ```bash
 # Start FastAPI server on http://localhost:8000
-python -m uvicorn src.server:app --reload --port 8000
+python -m uvicorn src.app:app --reload --port 8000
 ```
 
 ### Docker Deployment
@@ -326,7 +326,7 @@ openenv-sme-negotiator/
 │   ├── utils/
 │   │   ├── models.py                # Pydantic schemas
 │   │   └── grader.py                # Deterministic grader
-│   └── server.py                    # FastAPI WebSocket server
+│   └── app.py                       # FastAPI server factory
 ├── docker/
 │   └── Dockerfile                   # Container image
 ├── tests/
@@ -409,7 +409,7 @@ The `inference.py` script provides a complete baseline agent using OpenAI's LLM 
 
 3. **Start the server** (in another terminal):
    ```bash
-   python -m uvicorn src.server:app --host 0.0.0.0 --port 8000 --reload
+   python -m uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
    ```
 
 ### Running Inference
