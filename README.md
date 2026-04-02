@@ -1,3 +1,11 @@
+---
+title: Sme Negotiator
+emoji: 🤝
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
 # OpenEnv SME Negotiator: Reinforcement Learning for B2B Contract Negotiation
 
 A rigorous, OpenEnv-compliant reinforcement learning environment for SME B2B contract negotiation. This environment addresses a critical untouched domain identified in the Razorpay "Fix My Itch" dataset: **the asymmetry of negotiation power for Small and Medium Enterprises (SMEs)**.
