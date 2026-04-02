@@ -228,17 +228,17 @@ JSON response only:"""
         """Reset environment for new episode."""
         response = self.client.post(
             f"{self.server_url}/reset",
-            params={"task_id": task_id, "seed": seed}
+            params={"episode_id": f"{task_id}:{seed}", "seed": seed}
         )
         response.raise_for_status()
         payload = response.json()
-        return payload.get("state", payload)
+        return payload.get("observation", payload.get("state", payload))
     
     def step_episode(self, action: Dict) -> Dict:
         """Step environment with action."""
         response = self.client.post(
             f"{self.server_url}/step",
-            json=action
+            json={"action": action}
         )
         response.raise_for_status()
         payload = response.json()
@@ -406,7 +406,7 @@ JSON response only:"""
             
             # Step environment
             result = self.step_episode(action)
-            obs = result.get("observation", {})
+            obs = result.get("observation", result.get("state", {}))
             reward = result.get("reward", 0.0)
             terminated = result.get("terminated", False)
             

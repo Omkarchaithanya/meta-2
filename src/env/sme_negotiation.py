@@ -126,7 +126,10 @@ class SMENegotiationEnv(Environment):
 			Initial observation (NegotiationState)
 		"""
         
-		task_id = kwargs.get("task_id") or episode_id or "easy"
+		# Parse task_id from episode_id if passed as "task_id:seed" format
+		# or fall back to kwargs or default
+		raw = episode_id or kwargs.get("task_id") or "easy"
+		task_id = raw.split(":")[0] if raw else "easy"
 
 		if task_id not in self.TASKS:
 			raise ValueError(f"Unknown task_id: {task_id}")
