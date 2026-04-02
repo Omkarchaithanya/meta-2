@@ -100,6 +100,7 @@ class SMENegotiationAgent:
         self.hf_fallback_disabled = False
         self.llm_disabled = False
         self.llm_disabled_reason = ""
+        self.current_episode_id = None
 
     def heuristic_action(self, state: Dict[str, Any], task_id: str) -> Dict:
         """Deterministic heuristic policy used when remote LLM is unavailable."""
@@ -119,8 +120,8 @@ class SMENegotiationAgent:
                 use_treds = bool(can_accept_with_treds and days > liquidity_limit)
                 return {
                     "action_type": "ACCEPT",
-                    "proposed_price": price,
-                    "proposed_days": days,
+                    "proposed_price": float(state.get("p_opp", price)),
+                    "proposed_days": int(state.get("d_opp", days)),
                     "request_treds": use_treds,
                     "justification": "Heuristic accept: profitable and liquidity-feasible"
                 }
@@ -226,19 +227,22 @@ JSON response only:"""
     
     def reset_episode(self, task_id: str = "easy", seed: Optional[int] = None) -> Dict:
         """Reset environment for new episode."""
+        episode_id = f"{task_id}_{seed}"
+        self.current_episode_id = episode_id
         response = self.client.post(
             f"{self.server_url}/reset",
-            json={"task_id": task_id, "seed": seed}
+            json={"task_id": task_id, "seed": seed, "episode_id": episode_id}
         )
         response.raise_for_status()
         payload = response.json()
         return payload.get("observation", payload.get("state", payload))
     
-    def step_episode(self, action: Dict) -> Dict:
+    def step_episode(self, action: Dict, episode_id: Optional[str] = None) -> Dict:
         """Step environment with action."""
+        episode_id = episode_id or self.current_episode_id
         response = self.client.post(
             f"{self.server_url}/step",
-            json={"action": action}
+            json={"episode_id": episode_id, "action": action}
         )
         response.raise_for_status()
         payload = response.json()
@@ -344,6 +348,11 @@ JSON response only:"""
                 proposed_days = days
                 request_treds = days > liquidity and task_id in {"medium", "hard"}
 
+        if action_type == "ACCEPT":
+            proposed_price = price
+            proposed_days = days
+            request_treds = days > liquidity and task_id in {"medium", "hard"}
+
         # Keep proposals in a realistic band around current negotiation zone.
         if action_type == "PROPOSE":
             floor_price = max(cost * 1.01, price * 0.90)
@@ -405,7 +414,7 @@ JSON response only:"""
                 print(f" | Rejecting offer")
             
             # Step environment
-            result = self.step_episode(action)
+            result = self.step_episode(action, episode_id=self.current_episode_id)
             obs = result.get("observation", result.get("state", {}))
             reward = result.get("reward", 0.0)
             terminated = result.get("terminated", False)

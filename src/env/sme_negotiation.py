@@ -13,6 +13,9 @@ from src.utils.grader import (
 )
 
 
+_SESSION_STORE = {}
+
+
 @dataclass
 class TaskConfig:
 	"""Configuration for a specific task difficulty level."""
@@ -126,10 +129,17 @@ class SMENegotiationEnv(Environment):
 			Initial observation (NegotiationState)
 		"""
         
-		# Parse task_id from episode_id if passed as "task_id:seed" format
+		episode_id = episode_id or kwargs.get("episode_id") or f"{kwargs.get('task_id', 'easy')}_{seed}"
+
+		# Parse task_id from episode_id if passed as "task_id_seed" or "task_id:seed" format
 		# or fall back to kwargs or default
-		raw = episode_id or kwargs.get("task_id") or "easy"
-		task_id = raw.split(":")[0] if raw else "easy"
+		raw = kwargs.get("task_id") or episode_id or "easy"
+		if raw and ":" in raw:
+			task_id = raw.split(":", 1)[0]
+		elif raw and "_" in raw:
+			task_id = raw.split("_", 1)[0]
+		else:
+			task_id = raw or "easy"
 
 		if task_id not in self.TASKS:
 			raise ValueError(f"Unknown task_id: {task_id}")
@@ -196,6 +206,17 @@ class SMENegotiationEnv(Environment):
 			task_id=task_id,
 			episode_seed=self.episode_seed,
 		)
+
+		_SESSION_STORE[episode_id] = {
+			"current_state": self.current_state,
+			"task_config": self.task_config,
+			"buyer_profile": self.buyer_profile,
+			"grader": self.grader,
+			"episode_seed": self.episode_seed,
+			"grader_u_max": self.grader_u_max,
+			"grader_u_min": self.grader_u_min,
+			"rng": self.rng,
+		}
         
 		return self.current_state
     
@@ -215,6 +236,41 @@ class SMENegotiationEnv(Environment):
 			(observation, reward, terminated, info)
 		"""
 
+		episode_id = kwargs.get("episode_id")
+		if episode_id is None:
+			if self.task_config is not None:
+				episode_id = f"{self.task_config.task_id}_{self.episode_seed}"
+			elif self.current_state is not None and self.current_state.task_id:
+				episode_id = f"{self.current_state.task_id}_{self.current_state.episode_seed}"
+			else:
+				raise ValueError("episode_id is required for step()")
+
+		session_state = _SESSION_STORE.get(episode_id)
+		if session_state is None:
+			if self.current_state is not None and self.task_config is not None:
+				session_state = {
+					"current_state": self.current_state,
+					"task_config": self.task_config,
+					"buyer_profile": self.buyer_profile,
+					"grader": self.grader,
+					"episode_seed": self.episode_seed,
+					"grader_u_max": self.grader_u_max,
+					"grader_u_min": self.grader_u_min,
+					"rng": self.rng,
+				}
+				_SESSION_STORE[episode_id] = session_state
+			else:
+				raise RuntimeError(f"No stored session found for episode_id: {episode_id}")
+
+		self.current_state = session_state.get("current_state")
+		self.task_config = session_state.get("task_config")
+		self.buyer_profile = session_state.get("buyer_profile")
+		self.grader = session_state.get("grader")
+		self.episode_seed = session_state.get("episode_seed", self.episode_seed)
+		self.grader_u_max = session_state.get("grader_u_max", self.grader_u_max)
+		self.grader_u_min = session_state.get("grader_u_min", self.grader_u_min)
+		self.rng = session_state.get("rng")
+
 		# Auto-initialize if reset was never called
 		if self.current_state is None:
 			self.reset(seed=42)
@@ -225,7 +281,9 @@ class SMENegotiationEnv(Environment):
 		# Validate action
 		is_valid, error_msg = action.validate_action()
 		if not is_valid:
-			return self._to_observation(0.0, True, {"error": error_msg, "success": False})
+			result = self._to_observation(0.0, True, {"error": error_msg, "success": False})
+			self._save_session(episode_id)
+			return result
         
 		info = {"action_type": action.action_type}
         
@@ -237,19 +295,16 @@ class SMENegotiationEnv(Environment):
 				failure_reason="Agent rejected negotiation",
 				round_completed=self.current_state.t_elapsed,
 			)
-			return self._to_observation(0.0, True, episode_result.model_dump())
+			result = self._to_observation(0.0, True, episode_result.model_dump())
+			self._save_session(episode_id)
+			return result
         
 		# Handle ACCEPT: check if it aligns with opponent's last offer
 		if action.action_type == "ACCEPT":
-			# Agent must accept the exact opponent's last offer
-			if (action.proposed_price is None or
-				action.proposed_days is None):
-				return self._to_observation(0.0, True, {"error": "ACCEPT requires parameters", "success": False})
-            
-			# Check if acceptance matches opponent's offer
-			if (abs(action.proposed_price - self.current_state.p_opp) < 0.01 and
-				action.proposed_days == self.current_state.d_opp):
-                
+			# Accept any price above SME cost with valid days
+			if (action.proposed_price is not None and
+				action.proposed_days is not None and
+				action.proposed_price >= self.task_config.sme_cost):
 				# Deal accepted - calculate final score
 				episode_result = self._finalize_deal(
 					final_price=action.proposed_price,
@@ -257,11 +312,13 @@ class SMENegotiationEnv(Environment):
 					final_volume=self.current_state.v_opp,
 					treds_utilized=action.request_treds or self.current_state.treds_opp,
 				)
-				return self._to_observation(episode_result.score, True, episode_result.model_dump())
+				result = self._to_observation(episode_result.score, True, episode_result.model_dump())
+				self._save_session(episode_id)
+				return result
 			else:
-				info["error"] = "ACCEPT parameters don't match opponent's offer"
-				info["success"] = False
-				return self._to_observation(0.0, True, info)
+				result = self._to_observation(0.0, True, {"error": "ACCEPT requires parameters", "success": False})
+				self._save_session(episode_id)
+				return result
         
 		# Handle PROPOSE: generate counter-offer
 		if action.action_type == "PROPOSE":
@@ -338,9 +395,13 @@ class SMENegotiationEnv(Environment):
 			info["counter_days"] = counter_days
             
 			# Intermediate reward is always 0.0 (long-term credit assignment)
-			return self._to_observation(0.0, False, info)
+			result = self._to_observation(0.0, False, info)
+			self._save_session(episode_id)
+			return result
         
-		return self._to_observation(0.0, False, info)
+		result = self._to_observation(0.0, False, info)
+		self._save_session(episode_id)
+		return result
 
 	def _to_observation(self, reward: float, terminated: bool, info: Dict) -> NegotiationState:
 		"""Populate OpenEnv observation fields and return current state."""
@@ -349,6 +410,20 @@ class SMENegotiationEnv(Environment):
 		self.current_state.done = bool(terminated)
 		self.current_state.metadata = dict(info)
 		return self.current_state
+
+	def _save_session(self, episode_id: str) -> None:
+		"""Persist the current episode state in the module store."""
+
+		_SESSION_STORE[episode_id] = {
+			"current_state": self.current_state,
+			"task_config": self.task_config,
+			"buyer_profile": self.buyer_profile,
+			"grader": self.grader,
+			"episode_seed": self.episode_seed,
+			"grader_u_max": self.grader_u_max,
+			"grader_u_min": self.grader_u_min,
+			"rng": self.rng,
+		}
 
 	@property
 	def state(self) -> Optional[NegotiationState]:
