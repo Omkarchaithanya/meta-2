@@ -1,243 +1,376 @@
 {
   "metadata": {
-    "model": "meta-llama/Llama-3.1-8B-Instruct",
-    "api_base": "https://omkarchaithanya-sme-negotiator.hf.space",
-    "timestamp": "unknown"
+    "api_base_url": "http://localhost:8000",
+    "timestamp": "2026-04-03T17:52:55.659121"
   },
   "tasks": {
-    "easy": {
+    "EASY": {
       "episodes": [
         {
-          "task_id": "easy",
+          "difficulty": "EASY",
           "seed": 1000,
-          "final_score": 0.5895833333333336,
-          "total_reward": 0.5895833333333336,
-          "avg_reward": 0.19652777777777786,
+          "final_score": 0.8862999999999998,
+          "total_reward": 0.9062999999999998,
+          "steps": 2,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.5895833333333336
+            0.02,
+            0.8862999999999998
           ],
-          "steps": 3,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 2,
+            "max_rounds": 5,
+            "buyer_price": 94.32,
+            "buyer_days": 30,
+            "buyer_accepted": true,
+            "negotiation_done": true,
+            "cost_threshold": 80.0,
+            "liquidity_threshold": 45,
+            "volume": 1000,
+            "difficulty": "EASY",
+            "price_score": 0.8104999999999997,
+            "days_score": 1.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.8862999999999998,
+            "message": "Deal reached"
+          }
         },
         {
-          "task_id": "easy",
+          "difficulty": "EASY",
           "seed": 1001,
-          "final_score": 0.5895833333333336,
-          "total_reward": 0.5895833333333336,
-          "avg_reward": 0.19652777777777786,
+          "final_score": 0.8992,
+          "total_reward": 0.9192,
+          "steps": 2,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.5895833333333336
+            0.02,
+            0.8992
           ],
-          "steps": 3,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 2,
+            "max_rounds": 5,
+            "buyer_price": 94.75,
+            "buyer_days": 30,
+            "buyer_accepted": true,
+            "negotiation_done": true,
+            "cost_threshold": 80.0,
+            "liquidity_threshold": 45,
+            "volume": 1000,
+            "difficulty": "EASY",
+            "price_score": 0.8320000000000001,
+            "days_score": 1.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.8992,
+            "message": "Deal reached"
+          }
         },
         {
-          "task_id": "easy",
+          "difficulty": "EASY",
           "seed": 1002,
-          "final_score": 0.5895833333333336,
-          "total_reward": 0.5895833333333336,
-          "avg_reward": 0.19652777777777786,
+          "final_score": 0.9072999999999999,
+          "total_reward": 0.9272999999999999,
+          "steps": 2,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.5895833333333336
+            0.02,
+            0.9072999999999999
           ],
-          "steps": 3,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 2,
+            "max_rounds": 5,
+            "buyer_price": 95.01,
+            "buyer_days": 30,
+            "buyer_accepted": true,
+            "negotiation_done": true,
+            "cost_threshold": 80.0,
+            "liquidity_threshold": 45,
+            "volume": 1000,
+            "difficulty": "EASY",
+            "price_score": 0.8454999999999998,
+            "days_score": 1.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.9072999999999999,
+            "message": "Deal reached"
+          }
         }
       ],
-      "statistics": {
-        "final_scores": {
-          "mean": 0.5895833333333336,
-          "min": 0.5895833333333336,
-          "max": 0.5895833333333336,
-          "values": [
-            0.5895833333333336,
-            0.5895833333333336,
-            0.5895833333333336
-          ]
-        },
-        "total_rewards": {
-          "mean": 0.5895833333333336,
-          "total": 1.7687500000000007,
-          "values": [
-            0.5895833333333336,
-            0.5895833333333336,
-            0.5895833333333336
-          ]
-        },
+      "summary": {
+        "mean_final_score": 0.8975999999999998,
+        "mean_total_reward": 0.9175999999999999,
         "success_rate": 1.0
       }
     },
-    "medium": {
+    "MEDIUM": {
       "episodes": [
         {
-          "task_id": "medium",
+          "difficulty": "MEDIUM",
           "seed": 1000,
-          "final_score": 0.03864066022298601,
-          "total_reward": 0.03864066022298601,
-          "avg_reward": 0.006440110037164336,
+          "final_score": 0.02,
+          "total_reward": 0.16,
+          "steps": 8,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.03864066022298601
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02
           ],
-          "steps": 6,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 8,
+            "max_rounds": 8,
+            "buyer_price": 87.42,
+            "buyer_days": 60,
+            "buyer_accepted": false,
+            "negotiation_done": true,
+            "cost_threshold": 80.0,
+            "liquidity_threshold": 60,
+            "volume": 1000,
+            "difficulty": "MEDIUM",
+            "price_score": 0.0,
+            "days_score": 0.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.02,
+            "message": "Maximum rounds reached"
+          }
         },
         {
-          "task_id": "medium",
+          "difficulty": "MEDIUM",
           "seed": 1001,
-          "final_score": 0.03864066022298601,
-          "total_reward": 0.03864066022298601,
-          "avg_reward": 0.006440110037164336,
+          "final_score": 0.02,
+          "total_reward": 0.16,
+          "steps": 8,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.03864066022298601
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02
           ],
-          "steps": 6,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 8,
+            "max_rounds": 8,
+            "buyer_price": 87.0,
+            "buyer_days": 60,
+            "buyer_accepted": false,
+            "negotiation_done": true,
+            "cost_threshold": 80.0,
+            "liquidity_threshold": 60,
+            "volume": 1000,
+            "difficulty": "MEDIUM",
+            "price_score": 0.0,
+            "days_score": 0.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.02,
+            "message": "Maximum rounds reached"
+          }
         },
         {
-          "task_id": "medium",
+          "difficulty": "MEDIUM",
           "seed": 1002,
-          "final_score": 0.03864066022298601,
-          "total_reward": 0.03864066022298601,
-          "avg_reward": 0.006440110037164336,
+          "final_score": 0.02,
+          "total_reward": 0.16,
+          "steps": 8,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.03864066022298601
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02
           ],
-          "steps": 6,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 8,
+            "max_rounds": 8,
+            "buyer_price": 89.49,
+            "buyer_days": 60,
+            "buyer_accepted": false,
+            "negotiation_done": true,
+            "cost_threshold": 80.0,
+            "liquidity_threshold": 60,
+            "volume": 1000,
+            "difficulty": "MEDIUM",
+            "price_score": 0.0,
+            "days_score": 0.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.02,
+            "message": "Maximum rounds reached"
+          }
         }
       ],
-      "statistics": {
-        "final_scores": {
-          "mean": 0.03864066022298601,
-          "min": 0.03864066022298601,
-          "max": 0.03864066022298601,
-          "values": [
-            0.03864066022298601,
-            0.03864066022298601,
-            0.03864066022298601
-          ]
-        },
-        "total_rewards": {
-          "mean": 0.03864066022298601,
-          "total": 0.11592198066895804,
-          "values": [
-            0.03864066022298601,
-            0.03864066022298601,
-            0.03864066022298601
-          ]
-        },
+      "summary": {
+        "mean_final_score": 0.02,
+        "mean_total_reward": 0.16,
         "success_rate": 1.0
       }
     },
-    "hard": {
+    "HARD": {
       "episodes": [
         {
-          "task_id": "hard",
+          "difficulty": "HARD",
           "seed": 1000,
-          "final_score": 0.1399999999999999,
-          "total_reward": 0.1399999999999999,
-          "avg_reward": 0.01399999999999999,
+          "final_score": 0.02,
+          "total_reward": 0.23999999999999996,
+          "steps": 12,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.1399999999999999
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02
           ],
-          "steps": 10,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 12,
+            "max_rounds": 12,
+            "buyer_price": 85.21,
+            "buyer_days": 90,
+            "buyer_accepted": false,
+            "negotiation_done": true,
+            "cost_threshold": 70.0,
+            "liquidity_threshold": 30,
+            "volume": 5000,
+            "difficulty": "HARD",
+            "price_score": 0.0,
+            "days_score": 0.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.02,
+            "message": "Maximum rounds reached"
+          }
         },
         {
-          "task_id": "hard",
+          "difficulty": "HARD",
           "seed": 1001,
-          "final_score": 0.1399999999999999,
-          "total_reward": 0.1399999999999999,
-          "avg_reward": 0.01399999999999999,
+          "final_score": 0.02,
+          "total_reward": 0.23999999999999996,
+          "steps": 12,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.1399999999999999
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02
           ],
-          "steps": 10,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 12,
+            "max_rounds": 12,
+            "buyer_price": 84.79,
+            "buyer_days": 90,
+            "buyer_accepted": false,
+            "negotiation_done": true,
+            "cost_threshold": 70.0,
+            "liquidity_threshold": 30,
+            "volume": 5000,
+            "difficulty": "HARD",
+            "price_score": 0.0,
+            "days_score": 0.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.02,
+            "message": "Maximum rounds reached"
+          }
         },
         {
-          "task_id": "hard",
+          "difficulty": "HARD",
           "seed": 1002,
-          "final_score": 0.1399999999999999,
-          "total_reward": 0.1399999999999999,
-          "avg_reward": 0.01399999999999999,
+          "final_score": 0.02,
+          "total_reward": 0.23999999999999996,
+          "steps": 12,
+          "success": true,
           "step_rewards": [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.1399999999999999
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02,
+            0.02
           ],
-          "steps": 10,
-          "success": true
+          "final_observation": {
+            "done": false,
+            "reward": null,
+            "metadata": {},
+            "round_number": 12,
+            "max_rounds": 12,
+            "buyer_price": 86.79,
+            "buyer_days": 94,
+            "buyer_accepted": false,
+            "negotiation_done": true,
+            "cost_threshold": 70.0,
+            "liquidity_threshold": 30,
+            "volume": 5000,
+            "difficulty": "HARD",
+            "price_score": 0.0,
+            "days_score": 0.0,
+            "treds_bonus": 0.0,
+            "step_reward": 0.02,
+            "message": "Maximum rounds reached"
+          }
         }
       ],
-      "statistics": {
-        "final_scores": {
-          "mean": 0.1399999999999999,
-          "min": 0.1399999999999999,
-          "max": 0.1399999999999999,
-          "values": [
-            0.1399999999999999,
-            0.1399999999999999,
-            0.1399999999999999
-          ]
-        },
-        "total_rewards": {
-          "mean": 0.1399999999999999,
-          "total": 0.4199999999999997,
-          "values": [
-            0.1399999999999999,
-            0.1399999999999999,
-            0.1399999999999999
-          ]
-        },
+      "summary": {
+        "mean_final_score": 0.02,
+        "mean_total_reward": 0.23999999999999996,
         "success_rate": 1.0
       }
     }
+  },
+  "summary": {
+    "overall_mean_score": 0.31253333333333333,
+    "overall_mean_reward": 0.4391999999999999,
+    "overall_success_rate": 1.0
   }
 }
