@@ -37,33 +37,34 @@ python3 -m pip install -e . -q || {
 }
 echo "   ✓ Dependencies installed"
 
-# Check for OpenAI API key
+# Check for HF_TOKEN (Hugging Face Inference API key)
 echo ""
-echo "🔑 Checking OpenAI API key..."
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo "   ⚠️  OPENAI_API_KEY not set"
+echo "🔑 Checking HF_TOKEN..."
+if [ -z "$HF_TOKEN" ]; then
+    echo "   ⚠️  HF_TOKEN not set"
     echo ""
     echo "   To use baseline inference, set:"
-    echo "   export OPENAI_API_KEY='sk-...'"
+    echo "   export HF_TOKEN='hf_...'"
     echo ""
-    read -p "   Enter your OpenAI API key (or press Enter to skip): " API_KEY
+    read -p "   Enter your Hugging Face token (or press Enter to skip): " HF_KEY
     
-    if [ ! -z "$API_KEY" ]; then
-        export OPENAI_API_KEY="$API_KEY"
+    if [ ! -z "$HF_KEY" ]; then
+        export HF_TOKEN="$HF_KEY"
         
         # Save to .env file
         if [ ! -f .env ]; then
             cat > .env << EOF
-OPENAI_API_KEY=$OPENAI_API_KEY
+HF_TOKEN=$HF_TOKEN
 API_BASE_URL=https://router.huggingface.co/v1
 OPENENV_BASE_URL=http://127.0.0.1:7860
-MODEL_NAME=gpt-4o
+MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
+OPENENV_IN_PROCESS=0
 EOF
             echo "   ✓ Saved to .env file"
         fi
     fi
 else
-    echo "   ✓ OPENAI_API_KEY is set"
+    echo "   ✓ HF_TOKEN is set"
 fi
 
 # Run diagnostics

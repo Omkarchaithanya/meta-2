@@ -118,7 +118,7 @@ class SMENegotiatorEnvironment(Environment):
         return round(partial, 4), f"partial_progress:{detail}"
 
     def _reward_debug_print(self, branch: str, step_reward: float) -> None:
-        if os.getenv("REWARD_DEBUG", "1").strip() not in ("0", "false", "False", "no", "No"):
+        if os.getenv("REWARD_DEBUG", "0").strip() not in ("0", "false", "False", "no", "No"):
             print(f"[REWARD_DEBUG] branch={branch} step_reward={step_reward:.4f}", flush=True)
 
     def _check_done(self) -> bool:

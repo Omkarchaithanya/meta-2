@@ -418,7 +418,7 @@ Outputs are written to `inference_results.json` (gitignored by default).
 |----------|------|
 | `API_BASE_URL` | LLM OpenAI-compatible base URL |
 | `HF_TOKEN` | Token for Hugging Face router / hosted models |
-| `MODEL_NAME` | Model id (e.g. `mistralai/Mistral-7B-Instruct-v0.3`) |
+| `MODEL_NAME` | Chat-capable model id for `chat/completions` (e.g. `Qwen/Qwen2.5-7B-Instruct` on HF Router; some Mistral ids are not routed as chat) |
 | `OPENENV_BASE_URL` | Negotiation server (default `http://127.0.0.1:7860`) |
 | `OPENENV_IN_PROCESS` | `1` = no separate server |
 

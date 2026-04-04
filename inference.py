@@ -27,7 +27,9 @@ load_dotenv()
 # LLM: Hugging Face OpenAI-compatible router by default (override with API_BASE_URL in .env)
 API_BASE_URL = (os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1").strip()
 HF_TOKEN = (os.getenv("HF_TOKEN") or "").strip() or None
-MODEL_NAME = (os.getenv("MODEL_NAME") or "mistralai/Mistral-7B-Instruct-v0.3").strip()
+# HF Router chat/completions only accepts models exposed as *chat* models — not every Hub id works.
+MODEL_NAME = (os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-7B-Instruct").strip()
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "openenv-sme-negotiator:latest")
 
 
 def _llm_url_looks_local(url: str) -> bool:
@@ -244,7 +246,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
             done = bool(result.done)
             all_rewards.append(reward)
 
-            err_out = "null" if llm_error is None else json.dumps(llm_error)
+            err_out = "null" if llm_error is None else str(llm_error)
             print(
                 f'[STEP] step={round_number + 1} action={action_json} reward={reward:.2f} '
                 f'done={"true" if done else "false"} error={err_out}',
@@ -287,6 +289,12 @@ async def main() -> None:
 
     print(f"[CONFIG] LLM API_BASE_URL={API_BASE_URL}", flush=True)
     print(f"[CONFIG] MODEL_NAME={MODEL_NAME}", flush=True)
+    if "router.huggingface.co" in API_BASE_URL:
+        print(
+            "[CONFIG] Hugging Face router uses /v1/chat/completions — pick a chat/instruct model id "
+            "(e.g. Qwen/Qwen2.5-7B-Instruct). If you see 'not a chat model', change MODEL_NAME in .env.",
+            flush=True,
+        )
     if _llm_url_looks_local(API_BASE_URL):
         print(
             "[CONFIG] API_BASE_URL points to this machine (localhost/127.0.0.1). "

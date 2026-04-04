@@ -45,15 +45,15 @@ if [ -f "openenv.yaml" ]; then
     fi
     
     # Check required fields
-    if grep -q "api_version" openenv.yaml && grep -q "metadata" openenv.yaml; then
+    if grep -q "spec_version" openenv.yaml && grep -q "name:" openenv.yaml; then
         check_pass "openenv.yaml contains required fields"
     else
-        check_fail "openenv.yaml missing required fields (api_version, metadata)"
+        check_fail "openenv.yaml missing required fields (spec_version, name)"
     fi
     
     # Check task definitions
     if grep -q "tasks:" openenv.yaml; then
-        task_count=$(grep -c "- id:" openenv.yaml || true)
+        task_count=$(grep -c "- name:" openenv.yaml || true)
         if [ "$task_count" -ge 3 ]; then
             check_pass "openenv.yaml defines 3+ tasks (found: $task_count)"
         else
@@ -76,10 +76,10 @@ if [ -f "Dockerfile" ]; then
     check_pass "Dockerfile exists"
     
     # Check for required base image
-    if grep -q "FROM python" Dockerfile; then
-        check_pass "Dockerfile uses Python base image"
+    if grep -q "FROM.*openenv-base\|FROM python" Dockerfile; then
+        check_pass "Dockerfile uses valid base image"
     else
-        check_fail "Dockerfile must use Python base image"
+        check_fail "Dockerfile must use openenv-base or Python base image"
     fi
     
     # Check for port 7860 (HF Spaces requirement)
