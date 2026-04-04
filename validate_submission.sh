@@ -118,12 +118,11 @@ fi
 echo ""
 echo "━━━ CHECK 3: Environment Core Files ━━━"
 files_required=(
-    "src/env/sme_negotiation.py:SMENegotiationEnv class"
-    "src/utils/grader.py:DeterministicGrader class"
-    "src/utils/models.py:Pydantic type models"
-    "src/app.py:FastAPI server factory"
-    "client/env_client.py:AsyncEnvClient"
-    "requirements.txt:Python dependencies"
+    "sme_negotiator_env/client.py:SMENegotiatorEnv / OpenEnv client"
+    "sme_negotiator_env/graders.py:Task reward functions"
+    "sme_negotiator_env/models.py:Pydantic models"
+    "server/app.py:FastAPI + create_app entrypoint"
+    "requirements.txt:Python dependencies (lockfile: uv.lock)"
 )
 
 for file_spec in "${files_required[@]}"; do
@@ -137,16 +136,16 @@ done
 
 # Test environment imports
 echo "  Testing Python imports..."
-if python -c "from src.env.sme_negotiation import SMENegotiationEnv" 2>/dev/null; then
-    check_pass "SMENegotiationEnv imports successfully"
+if python -c "from sme_negotiator_env import SMENegotiatorEnv, NegotiationAction" 2>/dev/null; then
+    check_pass "sme_negotiator_env (SMENegotiatorEnv, NegotiationAction) imports successfully"
 else
-    check_fail "SMENegotiationEnv import failed"
+    check_fail "sme_negotiator_env import failed — run: pip install -e .  or  uv sync"
 fi
 
-if python -c "from src.utils.grader import DeterministicGrader" 2>/dev/null; then
-    check_pass "DeterministicGrader imports successfully"
+if python -c "from sme_negotiator_env.graders import grade_task_payment_terms_easy" 2>/dev/null; then
+    check_pass "sme_negotiator_env.graders imports successfully"
 else
-    check_fail "DeterministicGrader import failed"
+    check_fail "sme_negotiator_env.graders import failed"
 fi
 
 # ============================================================================
@@ -188,28 +187,17 @@ fi
 
 echo ""
 echo "━━━ CHECK 5: Test Coverage ━━━"
-test_files=(
-    "test_env.py"
-    "eval_standalone.py"
-    "run_diagnostics.py"
-)
+if [ -f "tests/test_environment.py" ]; then
+    check_pass "tests/test_environment.py exists"
+else
+    check_warn "tests/test_environment.py not found"
+fi
 
-for test_file in "${test_files[@]}"; do
-    if [ -f "$test_file" ]; then
-        check_pass "$test_file exists"
-    else
-        check_warn "$test_file not found"
-    fi
-done
-
-# Try to run diagnostics
-if [ -f "run_diagnostics.py" ]; then
-    echo "  Running diagnostic tests..."
-    if timeout 30 python run_diagnostics.py > /tmp/diagnostics.log 2>&1; then
-        check_pass "Diagnostic tests pass"
-    else
-        check_warn "Diagnostic tests did not complete (timeout or error)"
-    fi
+echo "  Running pytest via python -m pytest ..."
+if python -m pytest tests/ -q --tb=no 2>/dev/null; then
+    check_pass "pytest tests/ passes"
+else
+    check_warn "pytest tests/ failed or pytest missing (try: uv sync --extra dev && uv run pytest tests/)"
 fi
 
 # ============================================================================
@@ -245,25 +233,17 @@ fi
 # ============================================================================
 
 echo ""
-echo "━━━ CHECK 7: API Endpoints ━━━"
-endpoint_checks=(
-    "src/app.py:/health"
-    "src/app.py:/reset"
-    "src/app.py:/step"
-    "src/app.py:/state"
-)
-
-if [ -f "src/app.py" ]; then
-    for endpoint_spec in "${endpoint_checks[@]}"; do
-        IFS=':' read -r filepath endpoint <<< "$endpoint_spec"
-        if grep -q "\"$endpoint\"\|'$endpoint'" "$filepath"; then
-            check_pass "Endpoint $endpoint is implemented"
-        else
-            check_warn "Endpoint $endpoint may not be implemented"
-        fi
-    done
+echo "━━━ CHECK 7: API Endpoints (OpenEnv) ━━━"
+# Routes are provided by openenv.core.create_app; server/app.py mounts the env.
+if [ -f "server/app.py" ] && grep -q "create_app" server/app.py; then
+    check_pass "server/app.py uses openenv create_app (standard /health, /reset, /step, /state)"
 else
-    check_warn "src/app.py not found - cannot verify endpoints"
+    check_warn "server/app.py missing create_app — OpenEnv HTTP API may be incomplete"
+fi
+if [ -f "server/concurrency.py" ] && grep -q '"/reset"' server/concurrency.py && grep -q '"/step"' server/concurrency.py; then
+    check_pass "Concurrency limiter references /reset and /step"
+else
+    check_warn "server/concurrency.py may not match expected OpenEnv paths"
 fi
 
 # ============================================================================
@@ -274,7 +254,6 @@ echo ""
 echo "━━━ CHECK 8: Documentation ━━━"
 docs=(
     "README.md:Main documentation"
-    "QUICK_START.md:Quick start guide"
     "SETUP.md:Setup instructions"
 )
 

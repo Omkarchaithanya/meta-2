@@ -6,24 +6,29 @@ Complete reference guide to all documentation, code, and tools.
 
 ## 🚀 Quick Start (Choose One Path)
 
-### Fastest Path (3 minutes)
+### Fastest path
+
 ```bash
-bash quickstart.sh              # Auto-setup everything
-make baseline                   # Run baseline inference
+bash quickstart.sh              # if present: quick setup
+uv sync
+make diagnostic                 # import check + tests
+make baseline                   # requires LLM credentials in .env
 ```
 
-### Manual Path (5 minutes)
+### Manual path
+
 ```bash
-pip install -e .
-export OPENAI_API_KEY="sk-..."
-make server &
-make baseline
+uv sync
+# copy .env.example -> .env and set HF_TOKEN / API_BASE_URL / MODEL_NAME
+uv run server                   # terminal 1, port 7860
+uv run python inference.py      # terminal 2 (or OPENENV_IN_PROCESS=1)
 ```
 
-### Docker Path (2 minutes)
+### Docker
+
 ```bash
 make docker-build
-make docker-run
+make docker-run                 # http://127.0.0.1:7860
 ```
 
 ---
@@ -60,13 +65,13 @@ Part 1: Run Baseline
 └── .env                      ← API keys (create this)
 
 Part 2: Understanding the Environment
-├── server/sme_environment.py  ← Core MDP environment
-├── server/app.py              ← OpenEnv server entrypoint
-└── sme_negotiator_env/models.py ← Score and state models
+├── server/environment.py      ← Core MDP (`SMENegotiatorEnvironment`)
+├── server/app.py               ← OpenEnv `create_app` entrypoint
+├── server/sme_environment.py  ← Re-export of environment
+└── sme_negotiator_env/models.py
 
 Part 3: Testing
-├── tests/test_environment.py   ← Unit tests
-└── test_comprehensive.py       ← Full integration tests
+└── tests/test_environment.py   ← Unit tests
 ```
 
 ### Running Different Components
@@ -75,24 +80,15 @@ Part 3: Testing
 # Run baseline inference (uses OpenAI API)
 python inference.py
 
-# Start the game server
+# Start the game server (port 7860)
 make server
-# or
-python -m uvicorn server.app:app --reload
+# or: uv run server
 
 # Run unit tests
 make test
 
-# Run diagnostics
+# Quick health: imports + pytest
 make diagnostic
-# or
-python run_diagnostics.py
-
-# Format code
-make format
-
-# Type check
-make typecheck
 ```
 
 ---
@@ -102,15 +98,13 @@ make typecheck
 ### All Three Tasks Explained
 
 #### Easy Task: Price Optimization
-- **Focus**: Single-issue negotiation
-- **Timeline**: Fixed 30 days
-- **Baseline Score**: 0.87
-- **Goal**: Maximize price
+- **Focus**: Payment days vs liquidity cap (see `task_config.py` / `graders.py`)
+- **Opening buyer offer**: 100 @ 90d; liquidity threshold 60d
+- **Goal**: Agree terms ≤ 60d for full credit
 - **Python Example**:
   ```python
     env = SMENegotiatorEnvironment()
-    obs = env.reset(seed=42, difficulty="EASY")
-    # obs.buyer_price = ₹96, obs.buyer_days = 30, obs.cost_threshold = ₹70
+    obs = env.reset(seed=42, difficulty="easy")
   ```
 
 #### Medium Task: Pareto Frontier
@@ -120,12 +114,10 @@ make typecheck
 - **Goal**: Optimal price+days combination
 - **Financial Formula**: Higher days → can accept lower price
 
-#### Hard Task: TReDS Innovation
-- **Focus**: Complex financial engineering
-- **Timeline**: 120-day buyer constraint, 30-day SME survival
-- **Baseline Score**: 0.08
-- **Goal**: Recognize TReDS as solution
-- **Key Insight**: Propose lower price with TReDS factoring
+#### Hard Task: Dynamic discounting (NPV)
+- **Focus**: Agree **dynamic discounting**; terminal score from NPV vs status quo (`graders.py`)
+- **Note**: `use_treds` affects simulation but hard grading is **not** TReDS-only
+- **Key Insight**: Set `propose_dynamic_discounting` and a viable `dynamic_discount_annual_rate`
 
 ---
 

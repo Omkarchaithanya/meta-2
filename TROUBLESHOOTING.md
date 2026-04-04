@@ -59,15 +59,15 @@ pip install -r requirements.txt
 
 ## Server Issues
 
-### Problem: Port 8000 Already in Use
+### Problem: Port 7860 Already in Use
 
 **Error**: `OSError: [Errno 48] Address already in use` or similar
 
 **Solution**:
 ```bash
-# Find process using port 8000
-lsof -i :8000                          # Linux/Mac
-netstat -ano | findstr :8000           # Windows
+# Find process using port 7860
+lsof -i :7860                          # Linux/Mac
+netstat -ano | findstr :7860           # Windows
 
 # Kill the process
 kill -9 <PID>                          # Linux/Mac
@@ -100,27 +100,27 @@ python -m uvicorn server.app:app --log-level debug
 
 ### Problem: Cannot Connect to Server
 
-**Error**: `Cannot connect to http://localhost:8000`
+**Error**: `Cannot connect to http://localhost:7860`
 
 **Solution**:
 1. **Verify server is running**:
    ```bash
    # In terminal where you ran 'make server'
-   # You should see: "Uvicorn running on http://0.0.0.0:8000"
+   # You should see: "Uvicorn running on http://0.0.0.0:7860"
    ```
 
 2. **Test connectivity**:
    ```bash
-   curl http://localhost:8000/health
+   curl http://localhost:7860/health
    
    # If fails, try localhost by hostname
-   curl http://127.0.0.1:8000/health
+   curl http://127.0.0.1:7860/health
    ```
 
 3. **Check firewall** (if remote server):
    ```bash
-   # Ensure port 8000 is open
-   sudo ufw allow 8000  # Linux
+   # Ensure port 7860 is open
+   sudo ufw allow 7860  # Linux
    ```
 
 ---
@@ -544,7 +544,7 @@ If you're stuck:
 |---------|-----------|
 | Everything broken | `pip install -e .` then `make test` |
 | API fails | `echo $OPENAI_API_KEY` (verify set) |
-| Server won't start | Kill process on port 8000 |
+| Server won't start | Kill process on port 7860 |
 | Scores low | Check `price > cost` and `days < 120` |
 | JSON parse error | Safe fallback used, not a blocker |
 | Tests fail | Run `pytest tests/test_env.py -v` for more detail |

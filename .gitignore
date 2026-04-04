@@ -72,6 +72,7 @@ docker-compose.override.yml
 
 # Project specific
 *.log
+inference_results.json
 .mypy_cache/
 .ruff_cache/
 

@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$port = 8000
-$projectRoot = "C:\Users\omkar\Scaler\openenv-sme-negotiator"
+$port = 7860
+$projectRoot = $PSScriptRoot
 
 Write-Host "Checking for existing process on port $port..."
 $existing = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
@@ -17,4 +17,4 @@ if ($existing) {
 
 Write-Host "Starting OpenEnv server on http://127.0.0.1:$port ..."
 Set-Location $projectRoot
-python -m uvicorn src.app:app --host 127.0.0.1 --port $port
+python -m uvicorn server.app:app --host 127.0.0.1 --port $port

@@ -55,7 +55,8 @@ if [ -z "$OPENAI_API_KEY" ]; then
         if [ ! -f .env ]; then
             cat > .env << EOF
 OPENAI_API_KEY=$OPENAI_API_KEY
-API_BASE_URL=http://localhost:8000
+API_BASE_URL=https://router.huggingface.co/v1
+OPENENV_BASE_URL=http://127.0.0.1:7860
 MODEL_NAME=gpt-4o
 EOF
             echo "   ✓ Saved to .env file"
@@ -68,8 +69,8 @@ fi
 # Run diagnostics
 echo ""
 echo "🔍 Running diagnostics..."
-python3 run_diagnostics.py || {
-    echo "⚠️  Some diagnostics failed (this may be normal if server isn't running)"
+python3 -c "from server.app import app; print('app OK:', app.title)" || {
+    echo "⚠️  Import check failed — run from repo root with: pip install -e ."
 }
 
 # Print next steps

@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 from openenv.core import Environment
 
 from sme_negotiator_env.graders import TASK_GRADERS, grade_task_payment_terms_medium
+from sme_negotiator_env.problem_context import RAZORPAY_ITCH_BLURB
 from sme_negotiator_env.models import (
     NegotiationAction,
     NegotiationObservation,
@@ -40,6 +41,9 @@ class SMENegotiatorEnvironment(Environment):
         self._treds_used = False
         self._cumulative_reward = 0.0
         self._state: Optional[NegotiationState] = None
+        # Last SME counter-offer (used to score accept actions even if the model echoes buyer days)
+        self._last_sme_proposed_days: Optional[int] = None
+        self._last_sme_proposed_price: Optional[float] = None
 
     def state(self) -> Optional[NegotiationState]:
         """Return the current episode state."""
@@ -213,6 +217,8 @@ class SMENegotiatorEnvironment(Environment):
         self._final_days = None
         self._treds_used = False
         self._cumulative_reward = 0.0
+        self._last_sme_proposed_days = None
+        self._last_sme_proposed_price = None
 
         episode_id = str(kwargs.get("episode_id") or f"{tc.difficulty}_{self._seed}")
 
@@ -235,7 +241,12 @@ class SMENegotiatorEnvironment(Environment):
             interest_rate_annual=tc.interest_rate_annual,
             buyer_power_score=tc.buyer_power_score,
             secondary_buyer_power=tc.secondary_buyer_power,
-            message=f"Episode reset @ {self._now_utc_iso()} (task={tc.name}, base_concede={self._base_concede:.4f})",
+            message=(
+                f"{RAZORPAY_ITCH_BLURB} "
+                f"Task: {tc.description} "
+                f"{tc.context_note} "
+                f"| Episode reset @ {self._now_utc_iso()} (task_id={tc.name}, base_concede={self._base_concede:.4f})"
+            ),
         )
 
         msg = self._state.message
@@ -309,6 +320,16 @@ class SMENegotiatorEnvironment(Environment):
             and abs(proposed_price - self._buyer_price) < 1e-4
             and int(proposed_days) == int(self._buyer_days)
         )
+        # SME accepts while echoing its last proposed days/price (not necessarily buyer's current counter)
+        accepts_own_proposal = (
+            action_type == "accept"
+            and self._last_sme_proposed_days is not None
+            and int(proposed_days) == int(self._last_sme_proposed_days)
+            and (
+                self._last_sme_proposed_price is None
+                or abs(proposed_price - float(self._last_sme_proposed_price)) < 1e-4
+            )
+        )
 
         if action_type == "reject":
             self._state.step_count += 1
@@ -333,7 +354,7 @@ class SMENegotiatorEnvironment(Environment):
                 ),
             )
 
-        if action_type == "accept" and not auto_accept and not accepts_current_buyer_offer:
+        if action_type == "accept" and not auto_accept and not accepts_current_buyer_offer and not accepts_own_proposal:
             self._state.step_count += 1
             self._state.negotiation_round = self._state.step_count
             self._cumulative_reward += step_reward
@@ -356,7 +377,11 @@ class SMENegotiatorEnvironment(Environment):
 
         if auto_accept or action_type == "accept" or accepts_current_buyer_offer:
             agreed_price = proposed_price if proposed_price >= self._buyer_price else self._buyer_price
-            agreed_days = proposed_days
+            # Accept must reflect the SME's last proposal for grading; models often echo buyer_days instead.
+            if action_type == "accept" and self._last_sme_proposed_days is not None:
+                agreed_days = int(self._last_sme_proposed_days)
+            else:
+                agreed_days = proposed_days
             self._deal_reached = True
             self._final_price = agreed_price
             self._final_days = agreed_days
@@ -389,6 +414,10 @@ class SMENegotiatorEnvironment(Environment):
 
         prior_buyer_price = float(self._buyer_price)
         prior_buyer_days = int(self._buyer_days)
+
+        if action_type == "propose":
+            self._last_sme_proposed_days = proposed_days
+            self._last_sme_proposed_price = proposed_price
 
         price_jitter = self._rng.uniform(0.85, 1.15)
         price_drop = (

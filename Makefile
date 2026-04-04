@@ -1,33 +1,14 @@
-.PHONY: help install test lint format clean server docker docs
+.PHONY: help install install-dev test test-fast lint format clean server docker-build docker-run baseline diagnostic examples
 
 help:
 	@echo "OpenEnv SME Negotiator - Development Commands"
 	@echo ""
-	@echo "Setup:"
-	@echo "  make install          Install dependencies"
-	@echo "  make install-dev      Install with dev tools"
-	@echo "  make diagnostic       Verify installation and connectivity"
-	@echo ""
-	@echo "Development:"
-	@echo "  make test             Run tests"
-	@echo "  make test-fast        Run tests with minimal output"
-	@echo "  make lint             Run code quality checks"
-	@echo "  make format           Auto-format code"
-	@echo "  make typecheck        Run type checking"
-	@echo ""
-	@echo "Running:"
-	@echo "  make server           Start FastAPI server"
-	@echo "  make baseline         Run baseline inference with OpenAI (requires OPENAI_API_KEY)"
-	@echo "  make examples         Run example scripts"
-	@echo ""
-	@echo "Docker:"
-	@echo "  make docker-build     Build Docker image"
-	@echo "  make docker-run       Run Docker container"
-	@echo "  make docker-push      Push image to registry"
-	@echo ""
-	@echo "Utility:"
-	@echo "  make clean            Remove build artifacts"
-	@echo "  make docs             Build documentation"
+	@echo "  make install       pip install -e ."
+	@echo "  make test          pytest tests/"
+	@echo "  make server        uvicorn on 0.0.0.0:7860"
+	@echo "  make baseline      python inference.py"
+	@echo "  make diagnostic    import check + pytest"
+	@echo "  make docker-build / docker-run"
 
 install:
 	pip install -e .
@@ -42,59 +23,48 @@ test-fast:
 	pytest tests/ -q
 
 test-cov:
-	pytest tests/ --cov=src --cov-report=html
+	pytest tests/ --cov=sme_negotiator_env --cov=server --cov-report=html
 	@echo "Coverage report: htmlcov/index.html"
 
 lint:
-	@echo "Checking code style..."
-	black --check src/ tests/ examples/
-	ruff check src/ tests/
-	mypy src/ 2>/dev/null || true
+	python -m compileall -q server sme_negotiator_env tests
 
 format:
-	@echo "Formatting code..."
-	black src/ tests/ examples/
-	ruff check src/ tests/ --fix
+	@echo "Optional: pip install ruff && ruff format server sme_negotiator_env tests"
 
 typecheck:
-	mypy src/ --ignore-missing-imports
+	@echo "Optional: pip install mypy && mypy server sme_negotiator_env"
 
 clean:
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
-	rm -rf build/ dist/ *.egg-info/
-	rm -rf htmlcov/ .coverage .pytest_cache/
-	rm -rf .mypy_cache/ .ruff_cache/
+	python -c "import pathlib, shutil; \
+[shutil.rmtree(p, True) for p in pathlib.Path('.').rglob('__pycache__')]; \
+[shutil.rmtree(p, True) for p in ['build','dist','htmlcov','.pytest_cache','.mypy_cache','.ruff_cache'] if pathlib.Path(p).exists()]; \
+[shutil.rmtree(p, True) for p in pathlib.Path('.').glob('*.egg-info')]"
 
 server:
-	python -m uvicorn src.app:app --reload --port 8000
+	python -m uvicorn server.app:app --host 0.0.0.0 --port 7860
 
 examples:
-	python examples/01_basic_usage.py
+	@echo "No examples/ folder yet; see README Quick Start and inference.py"
 
 baseline:
 	python inference.py
 
 diagnostic:
-	python run_diagnostics.py
+	python -c "from server.app import app; print('app:', app.title)"
+	pytest tests/ -q --tb=line
 
 docker-build:
 	docker build -f docker/Dockerfile -t openenv-sme-negotiator:latest .
 
 docker-run:
-	docker run -p 8000:8000 openenv-sme-negotiator:latest
+	docker run -p 7860:7860 openenv-sme-negotiator:latest
 
 docker-push:
-	@read -p "Enter registry (e.g., docker.io/username): " REGISTRY; \
-	docker tag openenv-sme-negotiator:latest $$REGISTRY/openenv-sme-negotiator:latest; \
-	docker push $$REGISTRY/openenv-sme-negotiator:latest
+	@echo "docker tag && docker push (set your registry)"
 
 docs:
-	@echo "Documentation:"
-	@echo "  - README.md                  Main documentation"
-	@echo "  - DEVELOPMENT.md             Developer guide"
-	@echo "  - HF_SPACES_DEPLOYMENT.md   HF Spaces deployment"
-	@echo "  - NEMOTRON_INTEGRATION.md   Baseline agent integration"
+	@echo "README.md, SETUP.md, EVALUATION.md, TROUBLESHOOTING.md"
 
 .PHONY: all
-all: install-dev lint test
+all: install-dev test

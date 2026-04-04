@@ -9,93 +9,60 @@ Quick start guide for project participants.
 - **OpenAI API Key**: For baseline inference (get at https://platform.openai.com/account/api-keys)
 - **Git**: For cloning repository
 
-## 1. Clone & Navigate
+## 1. Clone & navigate
 
 ```bash
-git clone https://github.com/SkandaGanesha1/ENV.git
+git clone <YOUR_REPOSITORY_URL>
 cd openenv-sme-negotiator
 ```
 
-## 2. Install Dependencies
+## 2. Install dependencies
 
 ```bash
-# Install project and all dependencies
-pip install -e .
+uv sync
+# or: pip install -e .
 
-# Or just core requirements
-pip install -r requirements.txt
+# Dev tools (pytest)
+uv sync --extra dev
 ```
 
-## 3. Environment Setup
+## 3. Environment setup
 
-Create a `.env` file in the project root:
+Copy `.env.example` to `.env` and set:
+
+- **`HF_TOKEN`** — for Hugging Face Inference router (default `API_BASE_URL` in `inference.py`)
+- **`API_BASE_URL`** / **`MODEL_NAME`** — any OpenAI-compatible LLM
+- **`OPENENV_BASE_URL=http://127.0.0.1:7860`** — negotiation server (or use **`OPENENV_IN_PROCESS=1`** to skip a separate server)
+
+## 4. Start the server (optional)
+
+If you are **not** using `OPENENV_IN_PROCESS=1`:
 
 ```bash
-cat > .env << EOF
-OPENAI_API_KEY=your-api-key-here
-API_BASE_URL=http://localhost:8000
-MODEL_NAME=gpt-4o
-HF_TOKEN=your-hf-token-optional
-EOF
+uv run server
+# or: python -m uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
-Then load it:
+You should see Uvicorn on **`http://0.0.0.0:7860`** (matches `openenv.yaml` and Docker).
+
+## 5. Run baseline inference
 
 ```bash
-source .env  # On Linux/Mac
-# or
-set -a; source .env; set +a  # Bash with PowerShell
+uv run python inference.py
 ```
 
-## 4. Start the Server
-
-In one terminal:
+## 6. Run tests
 
 ```bash
-python -m uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+uv run pytest tests/ -v
 ```
 
-You should see:
-```
-INFO:     Started server process [XXXX]
-INFO:     Uvicorn running on http://0.0.0.0:8000
-```
-
-## 5. Run Baseline Inference
-
-In another terminal:
+## 7. Verify installation
 
 ```bash
-python inference.py
+make diagnostic
+# or: python -c "from server.app import app; print(app.title)" && uv run pytest tests/ -q
 ```
-
-This will run 9 episodes (3 per task: Easy, Medium, Hard) and output scores.
-
-## 6. Run Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run specific test file
-pytest tests/test_environment.py -v
-
-# Run with coverage
-pytest --cov=server --cov=sme_negotiator_env tests/
-```
-
-## 7. Verify Installation
-
-```bash
-python run_diagnostics.py
-```
-
-This will check:
-- ✓ Python version
-- ✓ Core dependencies installed
-- ✓ Server connectivity
-- ✓ Environment configuration
-- ✓ LLM API access
 
 ---
 
@@ -104,7 +71,8 @@ This will check:
 ```
 ├── server/
 │   ├── app.py                       # OpenEnv server entrypoint
-│   └── sme_environment.py           # Core environment MDP
+│   ├── environment.py               # Core environment MDP
+│   └── sme_environment.py           # Re-export
 ├── sme_negotiator_env/
 │   ├── client.py                    # Typed client and heuristic policy
 │   └── models.py                    # OpenEnv models
@@ -127,22 +95,17 @@ This will check:
 | **Medium** | Intermediate | Trade-off price vs payment days | 0.50-0.75 |
 | **Hard** | Expert | Use TReDS to overcome impossible constraints | 0.00-0.20 |
 
-### Score Calculation
+### Score calculation
 
-$$Score = \max(0, \min(1, \frac{NPV - U_{min}}{U_{max} - U_{min}}))$$
+- **Step**: Partial shaping reward + terminal grader output in `sme_negotiator_env/graders.py`.
+- **Details**: See README “Deterministic graders” and `server/environment.py`.
 
-Where NPV factors in:
-- **Profit margin**: price - cost
-- **Time value**: discounting via (1/(1+r)^(days/365))
-- **Liquidity penalty**: exponential penalty if days > 45 (without TReDS)
+### Environment workflow
 
-### Environment Workflow
-
-1. **Reset**: Initialize environment with task and seed
-2. **Step**: Agent proposes PROPOSE/ACCEPT/REJECT action
-3. **State Update**: Environment updates based on negotiation dynamics
-4. **Reward**: Get score (0 intermediate, normalized NPV at terminal)
-5. **Done**: Episode terminates when deal accepted or max rounds reached
+1. **Reset**: Task + seed (`task_name` or `difficulty`)
+2. **Step**: `action_type` propose / accept / reject with numeric fields (`models.py`)
+3. **Reward**: Partial + terminal (see above)
+4. **Done**: Deal, reject, or max rounds
 
 ---
 
@@ -159,22 +122,17 @@ $env:OPENAI_API_KEY="sk-..."     # PowerShell
 
 ### Issue: "Cannot connect to server"
 
-**Fix**: Make sure server is running (step 4), then:
-```bash
-# Test connectivity
-curl http://localhost:8000/health
+**Fix**: Make sure the server is running (step 4), then:
 
-# If fails, check port 8000 is not in use
-lsof -i :8000  # Linux/Mac
-netstat -ano | findstr :8000  # Windows
+```bash
+curl http://127.0.0.1:7860/health
 ```
 
-### Issue: "ModuleNotFoundError: No module named 'src'"
+If it fails, check that port **7860** is free (`netstat -ano | findstr :7860` on Windows).
 
-**Fix**: Install package in development mode:
-```bash
-pip install -e .
-```
+### Issue: "ModuleNotFoundError"
+
+**Fix**: Install the package in editable mode: `uv sync` or `pip install -e .`
 
 ### Issue: "RateLimitError from OpenAI"
 

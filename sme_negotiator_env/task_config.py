@@ -86,16 +86,17 @@ def default_task_config(task_id: str) -> TaskConfig:
             day_step_low=2,
             day_step_high=5,
             sme_monthly_revenue=500_000.0,
-            current_payment_terms_days=750,
-            sme_supplier_payment_days=20,
+            # Status-quo receivable horizon for WCGap (days); stress vs 60d buyer opening
+            current_payment_terms_days=75,
+            sme_supplier_payment_days=30,
             interest_rate_annual=0.22,
             buyer_power_score=0.6,
             secondary_buyer_power=None,
             negotiation_round_start=0,
             grader_id="payment-terms-medium",
             context_note=(
-                "Working-capital gap exceeds 2x monthly revenue (long receivable vs supplier terms). "
-                "Negotiate 45 days or better and a late payment penalty clause."
+                "Long receivable vs short supplier pay drives working-capital stress (see working_capital_gap). "
+                "Negotiate ≤45 days where possible and a late payment penalty clause for partial credit."
             ),
         )
     if task_id == "payment-terms-hard":

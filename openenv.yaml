@@ -1,7 +1,9 @@
 spec_version: 1
 version: 0.1.0
 name: openenv-sme-negotiator
-description: SME payment-term negotiation with working-capital financial state and graded tasks.
+description: >
+  SME vs large-buyer payment-term negotiation (Razorpay Fix My Itch B2B itch 82.8).
+  Working-capital state, deterministic graders, OpenEnv HTTP API.
 type: text
 runtime: fastapi
 app: server.app:app

@@ -31,24 +31,27 @@ def compute_financing_npv_vs_status_quo(state: "NegotiationState") -> float:
 
 
 def grade_task_payment_terms_easy(state: "NegotiationState") -> float:
-    """Easy: cooperative buyer; success = tighten terms 90→≤60 days."""
+    """Easy: cooperative buyer; success = agreed payment days at or below task liquidity threshold."""
     if not state.deal_reached or state.agreed_terms is None:
         return 0.0
     d = int(state.agreed_terms)
-    if d <= 60:
+    cap = int(state.liquidity_threshold)
+    if d <= cap:
         return 1.0
-    if d <= 75:
+    if d <= cap + 15:
         return 0.5
     return 0.0
 
 
 def grade_task_payment_terms_medium(state: "NegotiationState") -> float:
-    """Medium: need ≤45 days AND a late payment penalty clause."""
+    """Medium: primary success = agreed days at or below liquidity threshold (45d); bonus tier with penalty clause."""
     if not state.deal_reached or state.agreed_terms is None:
         return 0.0
-    if int(state.agreed_terms) <= 45 and state.late_payment_penalty_agreed:
+    d = int(state.agreed_terms)
+    cap = int(state.liquidity_threshold)
+    if d <= cap:
         return 1.0
-    if int(state.agreed_terms) <= 52 and state.late_payment_penalty_agreed:
+    if d <= cap + 7 and state.late_payment_penalty_agreed:
         return 0.5
     return 0.0
 
