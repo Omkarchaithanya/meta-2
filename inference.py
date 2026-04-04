@@ -19,7 +19,7 @@ load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:7860")
 HF_TOKEN = os.getenv("HF_TOKEN")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3.1-8B-Instruct")
 
 NEGOTIATION_SYSTEM_PROMPT = (
     "You are a B2B negotiation assistant. Respond ONLY with valid JSON containing "
