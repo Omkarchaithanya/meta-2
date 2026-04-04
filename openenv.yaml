@@ -1,9 +1,29 @@
-name: SME Negotiator Environment
-description: OpenEnv simulation for payment-term negotiation with SME focus
+spec_version: 1
+version: 0.1.0
+name: openenv-sme-negotiator
+description: SME payment-term negotiation with working-capital financial state and graded tasks.
 type: text
+runtime: fastapi
 app: server.app:app
 port: 7860
+
+action:
+  type: object
+  description: Negotiation action (price, payment_days, optional financing clauses).
+  schema_ref: NegotiationAction
+
+observation:
+  type: object
+  description: Round observation with buyer counters and SME financial context.
+  schema_ref: NegotiationObservation
+
 tasks:
-  - payment-term-negotiation
-  - early-payment-discount
-  - treds-enrollment
+  - name: payment-terms-easy
+    description: Single SME vs cooperative buyer — reduce payment terms from 90d toward 60d or better.
+    difficulty: easy
+  - name: payment-terms-medium
+    description: Working-capital stress — tighten toward 45d and agree a late payment penalty clause.
+    difficulty: medium
+  - name: payment-terms-hard
+    description: Hostile two-buyer consortium — negotiate dynamic discounting; reward uses NPV vs status quo.
+    difficulty: hard

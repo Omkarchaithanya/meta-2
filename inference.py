@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -13,24 +14,29 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from sme_negotiator_env.client import SMENegotiatorEnv
+from sme_negotiator_env.llm_action_parser import parse_llm_text_to_negotiation_action
 from sme_negotiator_env.models import NegotiationAction
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:7860")
+# LLM: always Hugging Face OpenAI-compatible router (hackathon rule — no other provider defaults)
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 HF_TOKEN = os.getenv("HF_TOKEN")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+
+# OpenEnv simulation server URL only (set OPENENV_BASE_URL in the environment for your deployment)
+OPENENV_BASE_URL = os.getenv("OPENENV_BASE_URL", "http://127.0.0.1:7860")
 
 NEGOTIATION_SYSTEM_PROMPT = (
     "You are a B2B negotiation assistant. Respond ONLY with valid JSON containing "
-    "keys: action_type, price, payment_days, use_treds, reason. "
+    "keys: action_type, price, payment_days, use_treds, reason, and optionally "
+    "propose_late_payment_penalty_clause, propose_dynamic_discounting, dynamic_discount_annual_rate. "
     "action_type must be one of: propose, accept, reject."
 )
 
-client = OpenAI(
-    base_url="https://router.huggingface.co/v1",
-    api_key=HF_TOKEN,
-)
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 
 def _observation_to_dict(observation: Any) -> Dict[str, Any]:
@@ -43,9 +49,11 @@ def _observation_to_dict(observation: Any) -> Dict[str, Any]:
 
 def format_observation(obs: Dict[str, Any]) -> str:
     return (
-        f"Round={obs.get('round_number')} | BuyerPrice={obs.get('buyer_price')} | "
-        f"BuyerDays={obs.get('buyer_days')} | LiquidityThreshold={obs.get('liquidity_threshold')} | "
-        f"CostThreshold={obs.get('cost_threshold')}"
+        f"Round={obs.get('round_number')} | Task={obs.get('task_name')} | "
+        f"BuyerPrice={obs.get('buyer_price')} | BuyerDays={obs.get('buyer_days')} | "
+        f"LiquidityThreshold={obs.get('liquidity_threshold')} | CostThreshold={obs.get('cost_threshold')} | "
+        f"MonthlyRevenueINR={obs.get('sme_monthly_revenue')} | WCGap={obs.get('working_capital_gap')} | "
+        f"BuyerPower={obs.get('buyer_power_score')}"
     )
 
 
@@ -77,19 +85,27 @@ def get_agent_action(observation: Dict[str, Any], history: List[dict], task_name
         max_tokens=180,
     )
 
-    raw = completion.choices[0].message.content.strip()
+    content = completion.choices[0].message.content
+    raw = (content or "").strip()
     if raw.startswith("```"):
         raw = raw.strip("`")
         raw = raw.replace("json", "", 1).strip()
 
-    action = json.loads(raw)
-    return {
-        "action_type": str(action.get("action_type", "propose")).lower(),
-        "price": float(action.get("price", observation.get("buyer_price", 0.0))),
-        "payment_days": int(action.get("payment_days", observation.get("buyer_days", 0))),
-        "use_treds": bool(action.get("use_treds", False)),
-        "reason": str(action.get("reason", "")),
-    }
+    try:
+        action = json.loads(raw)
+        if not isinstance(action, dict):
+            raise ValueError("LLM JSON root must be an object")
+        return {
+            "action_type": str(action.get("action_type", "propose")).lower(),
+            "price": float(action.get("price", observation.get("buyer_price", 0.0))),
+            "payment_days": int(action.get("payment_days", observation.get("buyer_days", 0))),
+            "use_treds": bool(action.get("use_treds", False)),
+            "reason": str(action.get("reason", "")),
+        }
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("LLM output not valid JSON (%s); using prose/regex parser. Raw snippet: %r", exc, raw[:300])
+        parsed = parse_llm_text_to_negotiation_action(raw, observation, allow_json=False)
+        return parsed.model_dump()
 
 
 def _to_model_action(action_payload: Dict[str, Any], observation: Any) -> NegotiationAction:
@@ -118,54 +134,67 @@ async def run_episode(env: SMENegotiatorEnv, difficulty: str, seed: int) -> Dict
     episode_id = f"{task_name}-{seed}"
     history: List[dict] = []
 
-    result = await env.reset(seed=seed, difficulty=difficulty, episode_id=episode_id, task_name=task_name)
-    observation = result.observation
-
-    print(
-        f"[START] EPISODE_ID={episode_id} TASK={task_name} "
-        f"SEED={seed} OBS={json.dumps(_observation_to_dict(observation), ensure_ascii=True)}",
-        flush=True,
-    )
-
+    all_rewards: List[float] = []
     round_number = 0
-    step_rewards: List[float] = []
-    total_reward = 0.0
+    success = False
+    result: Any = None
+    observation: Any = None
+    final_score = 0.0
 
-    while not result.done and round_number < observation.max_rounds:
-        obs_dict = _observation_to_dict(observation)
-
-        try:
-            action_payload = get_agent_action(obs_dict, history, task_name)
-        except Exception:
-            action_payload = _safe_fallback_action(observation)
-
-        action = _to_model_action(action_payload, observation)
+    try:
+        result = await env.reset(seed=seed, difficulty=difficulty, episode_id=episode_id, task_name=task_name)
+        observation = result.observation
 
         print(
-            f"[STEP] EPISODE_ID={episode_id} ROUND={round_number + 1} "
-            f"ACTION={json.dumps(action.model_dump(), ensure_ascii=True)} "
-            f"OBS={json.dumps(obs_dict, ensure_ascii=True)}",
+            f"[START] task={task_name} env=openenv-sme-negotiator model={MODEL_NAME}",
             flush=True,
         )
 
-        history.append({"role": "user", "content": format_observation(obs_dict)})
-        history.append({"role": "assistant", "content": json.dumps(action_payload, ensure_ascii=True)})
+        # Termination is driven by the environment (``done``), including max rounds — do not stop early here.
+        while not result.done:
+            obs_dict = _observation_to_dict(observation)
 
-        result = await env.step(action)
-        observation = result.observation
-        reward = float(result.reward or 0.0)
-        total_reward += reward
-        step_rewards.append(reward)
-        round_number += 1
+            llm_error: str | None = None
+            try:
+                action_payload = get_agent_action(obs_dict, history, task_name)
+            except Exception as e:
+                llm_error = str(e)
+                action_payload = _safe_fallback_action(observation)
 
-    final_score = float(result.reward or 0.0)
-    success = bool(result.done and final_score > 0.0)
+            action = _to_model_action(action_payload, observation)
+            action_json = json.dumps(action.model_dump(), ensure_ascii=True)
 
-    print(
-        f"[END] EPISODE_ID={episode_id} FINAL_SCORE={final_score} "
-        f"TOTAL_REWARD={total_reward} STEPS={round_number}",
-        flush=True,
-    )
+            result = await env.step(action)
+            observation = result.observation
+            reward = float(result.reward or 0.0)
+            done = bool(result.done)
+            all_rewards.append(reward)
+
+            err_out = "null" if llm_error is None else json.dumps(llm_error)
+            print(
+                f'[STEP] step={round_number + 1} action={action_json} reward={reward:.2f} '
+                f'done={"true" if done else "false"} error={err_out}',
+                flush=True,
+            )
+
+            history.append({"role": "user", "content": format_observation(obs_dict)})
+            history.append({"role": "assistant", "content": json.dumps(action_payload, ensure_ascii=True)})
+
+            round_number += 1
+
+        final_score = float(result.reward or 0.0)
+        meta = getattr(result.observation, "metadata", None) or {}
+        if isinstance(meta, dict) and "success" in meta:
+            success = bool(meta["success"])
+        else:
+            success = bool(result.done and final_score > 0.0)
+    finally:
+        total_reward = sum(all_rewards)
+        print(
+            f'[END] success={"true" if success else "false"} steps={round_number} '
+            f'rewards={",".join(f"{r:.2f}" for r in all_rewards)}',
+            flush=True,
+        )
 
     return {
         "difficulty": difficulty,
@@ -174,8 +203,8 @@ async def run_episode(env: SMENegotiatorEnv, difficulty: str, seed: int) -> Dict
         "total_reward": total_reward,
         "steps": round_number,
         "success": success,
-        "step_rewards": step_rewards,
-        "final_observation": _observation_to_dict(observation),
+        "step_rewards": all_rewards,
+        "final_observation": _observation_to_dict(observation) if observation is not None else {},
     }
 
 
@@ -184,14 +213,15 @@ async def main() -> None:
 
     results: Dict[str, Any] = {
         "metadata": {
-            "api_base_url": API_BASE_URL,
+            "llm_api_base_url": API_BASE_URL,
+            "openenv_base_url": OPENENV_BASE_URL,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "model_name": MODEL_NAME,
         },
         "tasks": {},
     }
 
-    async with SMENegotiatorEnv(base_url=API_BASE_URL) as env:
+    async with SMENegotiatorEnv(base_url=OPENENV_BASE_URL) as env:
         for difficulty in ["EASY", "MEDIUM", "HARD"]:
             episode_results: List[Dict[str, Any]] = []
             for seed in [1000, 1001, 1002]:
@@ -237,4 +267,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())

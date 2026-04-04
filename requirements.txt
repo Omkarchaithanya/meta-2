@@ -1,3 +1,4 @@
+# Kept in sync with [project.dependencies] in pyproject.toml — prefer: uv sync
 fastapi>=0.104.0
 uvicorn>=0.23.0
 pydantic>=2.0.0

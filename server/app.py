@@ -5,24 +5,24 @@ from __future__ import annotations
 import os
 
 from openenv.core import create_app
+
 from sme_negotiator_env.models import NegotiationAction, NegotiationObservation
 
+from .concurrency import OpenEnvConcurrencyLimiter, max_concurrent_envs_from_env
 from .sme_environment import SMENegotiatorEnvironment
 
+
+_max = max_concurrent_envs_from_env()
 
 app = create_app(
     SMENegotiatorEnvironment,
     NegotiationAction,
     NegotiationObservation,
     env_name="sme-negotiator",
+    max_concurrent_envs=_max,
 )
 
-
-@app.post("/reset")
-def reset_status() -> dict:
-    """Fallback reset endpoint used when framework route is unavailable."""
-
-    return {"status": "ok"}
+app.add_middleware(OpenEnvConcurrencyLimiter, max_concurrent=_max)
 
 
 def main() -> None:

@@ -1,30 +1,29 @@
-FROM python:3.10-slim
+FROM ghcr.io/meta-pytorch/openenv-base:latest
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
-COPY pyproject.toml .
-COPY src/ ./src/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-editable
+COPY README.md ./
+COPY openenv.yaml ./
+COPY server ./server
+COPY sme_negotiator_env ./sme_negotiator_env
+RUN uv sync --frozen --no-editable
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e .
+ENV PATH="/app/.venv/bin:${PATH}"
 
-# Default to HuggingFace Spaces port 7860, fallback to 8000 for local dev
 ENV PORT=7860
+ENV ENABLE_WEB_INTERFACE=true
+ENV PYTHONPATH=/app
 
-# Expose port for WebSocket server (HF Spaces: 7860, local dev: 8000)
-EXPOSE 7860 8000
-
-# Health check for HF Spaces
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+    CMD curl -f http://127.0.0.1:${PORT}/health || exit 1
 
-# Default command runs the OpenEnv server with dynamic port binding
-CMD ["sh", "-c", "uvicorn src.app:app --host 0.0.0.0 --port ${PORT}"]
+EXPOSE 7860
+
+CMD ["sh", "-c", "uvicorn server.app:app --host 0.0.0.0 --port 7860"]

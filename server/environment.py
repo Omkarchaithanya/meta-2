@@ -2,138 +2,43 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
 from datetime import datetime, timezone
 from random import Random
-from typing import Callable, Dict, Optional
+from typing import Optional, Tuple
 
 from openenv.core import Environment
 
+from sme_negotiator_env.graders import TASK_GRADERS, grade_task_payment_terms_medium
 from sme_negotiator_env.models import (
     NegotiationAction,
     NegotiationObservation,
     NegotiationState,
+    default_negotiation_state,
 )
-
-
-def grade_payment_term_negotiation(state: dict) -> float:
-    """Score based on how much buyer_days was reduced toward threshold."""
-    improvement = state["initial_buyer_days"] - state["final_buyer_days"]
-    target = state["initial_buyer_days"] - state["threshold_days"]
-    return round(min(1.0, max(0.0, improvement / max(target, 1))), 4)
-
-
-def grade_early_payment_discount(state: dict) -> float:
-    """Score based on discount rate accepted by buyer relative to cost of capital."""
-    discount = state.get("agreed_discount_rate", 0.0)
-    cost_of_capital = state.get("cost_of_capital", 0.18)
-    return round(min(1.0, max(0.0, discount / cost_of_capital)), 4)
-
-
-def grade_treds_enrollment(state: dict) -> float:
-    """Binary: 1.0 if buyer enrolled in TREDS platform, else 0.0."""
-    return 1.0 if state.get("treds_enrolled", False) else 0.0
-
-
-@dataclass(frozen=True)
-class DifficultyPreset:
-    name: str
-    initial_buyer_price: float
-    initial_buyer_days: int
-    max_rounds: int
-    volume: int
-    cost_threshold: float
-    liquidity_threshold: int
-    concede_low: float
-    concede_high: float
-    day_floor: int
-    day_step_low: int
-    day_step_high: int
-
-
-PRESETS: Dict[str, DifficultyPreset] = {
-    "EASY": DifficultyPreset(
-        name="EASY",
-        initial_buyer_price=100.0,
-        initial_buyer_days=45,
-        max_rounds=5,
-        volume=1000,
-        cost_threshold=80.0,
-        liquidity_threshold=30,
-        concede_low=0.01,
-        concede_high=0.03,
-        day_floor=30,
-        day_step_low=1,
-        day_step_high=3,
-    ),
-    "MEDIUM": DifficultyPreset(
-        name="MEDIUM",
-        initial_buyer_price=100.0,
-        initial_buyer_days=90,
-        max_rounds=8,
-        volume=1000,
-        cost_threshold=80.0,
-        liquidity_threshold=60,
-        concede_low=0.005,
-        concede_high=0.015,
-        day_floor=60,
-        day_step_low=2,
-        day_step_high=6,
-    ),
-    "HARD": DifficultyPreset(
-        name="HARD",
-        initial_buyer_price=95.0,
-        initial_buyer_days=120,
-        max_rounds=12,
-        volume=5000,
-        cost_threshold=70.0,
-        liquidity_threshold=30,
-        concede_low=0.002,
-        concede_high=0.008,
-        day_floor=90,
-        day_step_low=1,
-        day_step_high=4,
-    ),
-}
-
-
-TASK_TO_DIFFICULTY: Dict[str, str] = {
-    "payment-term-negotiation": "MEDIUM",
-    "early-payment-discount": "EASY",
-    "treds-enrollment": "HARD",
-}
-
-
-GRADERS: Dict[str, Callable[[dict], float]] = {
-    "payment-term-negotiation": grade_payment_term_negotiation,
-    "early-payment-discount": grade_early_payment_discount,
-    "treds-enrollment": grade_treds_enrollment,
-}
+from sme_negotiator_env.task_config import TaskConfig, resolve_task_id, TASK_REGISTRY
 
 
 class SMENegotiatorEnvironment(Environment):
     """OpenEnv environment for SME payment term negotiation."""
 
-    SUPPORTS_CONCURRENT_SESSIONS = False
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(self) -> None:
         self._rng = Random()
-        self._preset = PRESETS["EASY"]
-        self._difficulty = "EASY"
-        self._active_task_name = "payment-term-negotiation"
+        self._task_config: TaskConfig = TASK_REGISTRY["payment-terms-medium"]
         self._seed = 1000
         self._base_concede = 0.02
-        self._buyer_min_days_floor = self._preset.day_floor
-        self._buyer_price = self._preset.initial_buyer_price
-        self._buyer_days = self._preset.initial_buyer_days
-        self._initial_buyer_price = self._preset.initial_buyer_price
-        self._initial_buyer_days = self._preset.initial_buyer_days
+        self._buyer_min_days_floor = 30
+        self._buyer_price = 100.0
+        self._buyer_days = 90
+        self._initial_buyer_price = 100.0
+        self._initial_buyer_days = 90
         self._deal_reached = False
         self._final_price: Optional[float] = None
         self._final_days: Optional[int] = None
         self._treds_used = False
         self._cumulative_reward = 0.0
-        self._cost_of_capital = 0.18
         self._state: Optional[NegotiationState] = None
 
     def state(self) -> Optional[NegotiationState]:
@@ -144,94 +49,201 @@ class SMENegotiatorEnvironment(Environment):
     def _now_utc_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _grade_current_task(self, final_price: float, final_days: int) -> float:
-        """Run task-specific grader based on active task name."""
+    def _grader_fn(self):
+        return TASK_GRADERS.get(self._task_config.grader_id, grade_task_payment_terms_medium)
 
-        agreed_discount_rate = max(
-            0.0,
-            (self._initial_buyer_price - final_price) / max(self._initial_buyer_price, 1e-9),
-        )
-        grader_state = {
-            "initial_buyer_days": self._initial_buyer_days,
-            "final_buyer_days": final_days,
-            "threshold_days": self._preset.liquidity_threshold,
-            "agreed_discount_rate": agreed_discount_rate,
-            "cost_of_capital": self._cost_of_capital,
-            "treds_enrolled": self._treds_used,
+    def _apply_terminal_outcome_to_state(
+        self,
+        agreed_price: float,
+        agreed_days: int,
+        action: NegotiationAction,
+    ) -> None:
+        assert self._state is not None
+        self._state.deal_reached = True
+        self._state.final_price = agreed_price
+        self._state.final_days = agreed_days
+        self._state.agreed_terms = int(agreed_days)
+        self._state.treds_used = bool(action.use_treds) or self._state.treds_used
+        self._state.late_payment_penalty_agreed = bool(action.propose_late_payment_penalty_clause)
+        self._state.dynamic_discounting_agreed = bool(action.propose_dynamic_discounting)
+        self._state.agreed_dynamic_discount_annual = float(action.dynamic_discount_annual_rate)
+
+    def _terminal_reward(self) -> float:
+        assert self._state is not None
+        return float(self._grader_fn()(self._state))
+
+    def _compute_reward(
+        self,
+        proposed_price: float,
+        proposed_days: int,
+        *,
+        current_buyer_price: float,
+        current_buyer_days: int,
+    ) -> Tuple[float, str]:
+        """Partial step reward for ongoing negotiation (non-terminal)."""
+
+        pct = self._task_config
+        cost = float(pct.cost_threshold)
+        liq = int(pct.liquidity_threshold)
+        init_p = float(self._initial_buyer_price)
+        cur_d = int(current_buyer_days)
+        cur_p = float(current_buyer_price)
+
+        if proposed_price < cost:
+            return 0.12, "invalid_below_cost"
+
+        if proposed_days > cur_d:
+            return 0.1, "no_progress_days_worse_than_buyer"
+
+        days_delta_frac = max(0.0, min(1.0, float(cur_d - proposed_days) / max(float(cur_d), 1.0)))
+        days_gap = max(1, cur_d - liq)
+        days_toward_threshold = max(0.0, min(1.0, float(cur_d - proposed_days) / float(days_gap)))
+        days_improve = max(0.0, min(1.0, 0.45 * days_delta_frac + 0.55 * days_toward_threshold))
+
+        price_span = max(1e-9, init_p - cost)
+        price_improve = max(0.0, min(1.0, (float(proposed_price) - cost) / price_span))
+
+        improvement = max(0.0, min(1.0, 0.65 * days_improve + 0.35 * price_improve))
+
+        if improvement < 1e-6:
+            return 0.08, "no_progress_negligible"
+
+        raw = 0.2 + 0.6 * improvement
+        partial = min(0.3, raw * 0.3)
+        detail = f"improvement={improvement:.3f}|days={days_improve:.3f}|price={price_improve:.3f}"
+        return round(partial, 4), f"partial_progress:{detail}"
+
+    def _reward_debug_print(self, branch: str, step_reward: float) -> None:
+        if os.getenv("REWARD_DEBUG", "1").strip() not in ("0", "false", "False", "no", "No"):
+            print(f"[REWARD_DEBUG] branch={branch} step_reward={step_reward:.4f}", flush=True)
+
+    def _check_done(self) -> bool:
+        assert self._state is not None
+        if self._deal_reached:
+            return True
+        if self._state.step_count >= self._task_config.max_rounds:
+            return True
+        return False
+
+    def _episode_meta(
+        self,
+        reward_branch: str,
+        *,
+        success: bool,
+        termination_reason: str,
+    ) -> dict[str, object]:
+        assert self._state is not None
+        return {
+            "episode_id": self._state.episode_id,
+            "task_name": self._task_config.name,
+            "reward_branch": reward_branch,
+            "success": success,
+            "termination_reason": termination_reason,
         }
-        grader = GRADERS.get(self._active_task_name, grade_payment_term_negotiation)
-        return grader(grader_state)
+
+    def _obs_from_state(
+        self,
+        *,
+        buyer_accepted: bool,
+        negotiation_done: bool,
+        step_reward: float,
+        message: str,
+        reward: float,
+        done: bool,
+        metadata: dict[str, object],
+    ) -> NegotiationObservation:
+        assert self._state is not None
+        tc = self._task_config
+        return NegotiationObservation(
+            round_number=self._state.negotiation_round,
+            max_rounds=tc.max_rounds,
+            buyer_price=self._buyer_price,
+            buyer_days=self._buyer_days,
+            buyer_accepted=buyer_accepted,
+            negotiation_done=negotiation_done,
+            cost_threshold=tc.cost_threshold,
+            liquidity_threshold=tc.liquidity_threshold,
+            volume=tc.volume,
+            difficulty=tc.difficulty,
+            price_score=0.0,
+            days_score=0.0,
+            treds_bonus=0.15 if self._treds_used else 0.0,
+            step_reward=step_reward,
+            message=message,
+            reward=reward,
+            done=done,
+            metadata=metadata,
+            task_name=tc.name,
+            sme_monthly_revenue=tc.sme_monthly_revenue,
+            working_capital_gap=self._state.working_capital_gap,
+            interest_rate_annual=tc.interest_rate_annual,
+            buyer_power_score=tc.buyer_power_score,
+            secondary_buyer_power=tc.secondary_buyer_power,
+            current_payment_terms_days=tc.current_payment_terms_days,
+            sme_supplier_payment_days=tc.sme_supplier_payment_days,
+        )
 
     def reset(
         self,
         seed: Optional[int] = None,
-        difficulty: str = "EASY",
+        difficulty: str = "MEDIUM",
         **kwargs,
     ) -> NegotiationObservation:
         """Reset the environment for a new episode."""
 
-        task_name = str(kwargs.get("task_name") or kwargs.get("task") or self._active_task_name)
-        self._active_task_name = task_name if task_name in GRADERS else "payment-term-negotiation"
+        requested_task = kwargs.get("task_name") or kwargs.get("task")
+        task_id = resolve_task_id(
+            str(requested_task) if requested_task else None,
+            difficulty=difficulty,
+        )
 
-        requested_difficulty = (difficulty or "EASY").upper()
-        if task_name in TASK_TO_DIFFICULTY and not kwargs.get("difficulty"):
-            requested_difficulty = TASK_TO_DIFFICULTY[task_name]
+        self._task_config = TASK_REGISTRY[task_id]
+        tc = self._task_config
 
-        self._difficulty = requested_difficulty
-        if self._difficulty not in PRESETS:
-            raise ValueError(f"Unknown difficulty: {difficulty}")
-
-        self._preset = PRESETS[self._difficulty]
         self._seed = int(seed if seed is not None else 1000)
         self._rng = Random(self._seed)
-        self._base_concede = self._rng.uniform(self._preset.concede_low, self._preset.concede_high)
-        self._buyer_min_days_floor = self._preset.day_floor
-        self._buyer_price = self._preset.initial_buyer_price
-        self._buyer_days = self._preset.initial_buyer_days
-        self._initial_buyer_price = self._preset.initial_buyer_price
-        self._initial_buyer_days = self._preset.initial_buyer_days
+        self._base_concede = self._rng.uniform(tc.concede_low, tc.concede_high)
+        self._buyer_min_days_floor = tc.day_floor
+        self._buyer_price = tc.initial_buyer_price
+        self._buyer_days = tc.initial_buyer_days
+        self._initial_buyer_price = tc.initial_buyer_price
+        self._initial_buyer_days = tc.initial_buyer_days
         self._deal_reached = False
         self._final_price = None
         self._final_days = None
         self._treds_used = False
         self._cumulative_reward = 0.0
 
-        episode_id = kwargs.get("episode_id") or f"{self._difficulty.lower()}_{self._seed}"
-        self._state = NegotiationState(
+        episode_id = str(kwargs.get("episode_id") or f"{tc.difficulty}_{self._seed}")
+
+        self._state = default_negotiation_state(
             episode_id=episode_id,
             seed=self._seed,
-            difficulty=self._difficulty,
-            step_count=0,
-            max_steps=self._preset.max_rounds,
-            deal_reached=False,
-            final_price=None,
-            final_days=None,
-            treds_used=False,
-            cumulative_reward=0.0,
+            difficulty=tc.difficulty,
+            task_name=tc.name,
+            max_steps=tc.max_rounds,
+            max_rounds=tc.max_rounds,
             buyer_price=self._buyer_price,
             buyer_days=self._buyer_days,
-            cost_threshold=self._preset.cost_threshold,
-            liquidity_threshold=self._preset.liquidity_threshold,
-            volume=self._preset.volume,
-            message=f"Episode reset @ {self._now_utc_iso()} (base_concede={self._base_concede:.4f})",
+            initial_buyer_days=self._initial_buyer_days,
+            cost_threshold=tc.cost_threshold,
+            liquidity_threshold=tc.liquidity_threshold,
+            volume=tc.volume,
+            sme_monthly_revenue=tc.sme_monthly_revenue,
+            current_payment_terms_days=tc.current_payment_terms_days,
+            sme_supplier_payment_days=tc.sme_supplier_payment_days,
+            interest_rate_annual=tc.interest_rate_annual,
+            buyer_power_score=tc.buyer_power_score,
+            secondary_buyer_power=tc.secondary_buyer_power,
+            message=f"Episode reset @ {self._now_utc_iso()} (task={tc.name}, base_concede={self._base_concede:.4f})",
         )
 
-        return NegotiationObservation(
-            round_number=0,
-            max_rounds=self._preset.max_rounds,
-            buyer_price=self._buyer_price,
-            buyer_days=self._buyer_days,
+        msg = self._state.message
+        return self._obs_from_state(
             buyer_accepted=False,
             negotiation_done=False,
-            cost_threshold=self._preset.cost_threshold,
-            liquidity_threshold=self._preset.liquidity_threshold,
-            volume=self._preset.volume,
-            difficulty=self._difficulty,
-            price_score=0.0,
-            days_score=0.0,
-            treds_bonus=0.0,
             step_reward=0.0,
-            message=f"Episode reset @ {self._now_utc_iso()} (base_concede={self._base_concede:.4f})",
+            message=msg,
             reward=0.0,
             done=False,
             metadata={
@@ -239,38 +251,40 @@ class SMENegotiatorEnvironment(Environment):
                 "seed": self._seed,
                 "base_concede": self._base_concede,
                 "buyer_day_floor": self._buyer_min_days_floor,
-                "task_name": self._active_task_name,
+                "task_name": tc.name,
+                "task_description": tc.description,
+                "context_note": tc.context_note,
             },
         )
+
+    def _buyer_counter_power_multiplier(self) -> float:
+        """Higher buyer power → smaller concessions."""
+        p = float(self._task_config.buyer_power_score)
+        return max(0.2, 1.0 - 0.55 * p)
 
     def step(self, action: NegotiationAction, **kwargs) -> NegotiationObservation:
         """Apply one action and advance the negotiation."""
 
         if self._state is None:
-            self.reset(seed=self._seed, difficulty=self._difficulty)
+            self.reset(seed=self._seed, difficulty=self._task_config.difficulty)
 
         assert self._state is not None
+        tc = self._task_config
+        power_mult = self._buyer_counter_power_multiplier()
 
-        if self._deal_reached or self._state.step_count >= self._preset.max_rounds:
-            return NegotiationObservation(
-                round_number=self._state.step_count,
-                max_rounds=self._preset.max_rounds,
-                buyer_price=self._buyer_price,
-                buyer_days=self._buyer_days,
+        if self._deal_reached or self._state.step_count >= tc.max_rounds:
+            return self._obs_from_state(
                 buyer_accepted=False,
                 negotiation_done=True,
-                cost_threshold=self._preset.cost_threshold,
-                liquidity_threshold=self._preset.liquidity_threshold,
-                volume=self._preset.volume,
-                difficulty=self._difficulty,
-                price_score=0.0,
-                days_score=0.0,
-                treds_bonus=0.0,
                 step_reward=0.0,
                 message="Episode already completed",
                 reward=0.0,
                 done=True,
-                metadata={"episode_id": self._state.episode_id, "task_name": self._active_task_name},
+                metadata=self._episode_meta(
+                    "already_completed",
+                    success=False,
+                    termination_reason="already_completed",
+                ),
             )
 
         action_type = str(action.action_type).lower()
@@ -280,9 +294,6 @@ class SMENegotiatorEnvironment(Environment):
         step_reward = 0.0
         message = "Buyer countered"
 
-        if proposed_price < self._preset.cost_threshold:
-            step_reward -= 0.1
-
         if use_treds:
             reduction = self._rng.randint(5, 15)
             self._buyer_min_days_floor = max(0, self._buyer_min_days_floor - reduction)
@@ -291,120 +302,122 @@ class SMENegotiatorEnvironment(Environment):
 
         auto_accept = (
             self._buyer_price <= proposed_price
-            and self._buyer_days <= self._preset.liquidity_threshold
+            and self._buyer_days <= tc.liquidity_threshold
+        )
+        accepts_current_buyer_offer = (
+            action_type == "accept"
+            and abs(proposed_price - self._buyer_price) < 1e-4
+            and int(proposed_days) == int(self._buyer_days)
         )
 
         if action_type == "reject":
             self._state.step_count += 1
+            self._state.negotiation_round = self._state.step_count
             self._cumulative_reward += step_reward
             self._state.cumulative_reward = self._cumulative_reward
             self._state.message = "Agent rejected the negotiation"
             self._state.buyer_price = self._buyer_price
             self._state.buyer_days = self._buyer_days
-            return NegotiationObservation(
-                round_number=self._state.step_count,
-                max_rounds=self._preset.max_rounds,
-                buyer_price=self._buyer_price,
-                buyer_days=self._buyer_days,
+            self._reward_debug_print("reject_episode", step_reward)
+            return self._obs_from_state(
                 buyer_accepted=False,
                 negotiation_done=True,
-                cost_threshold=self._preset.cost_threshold,
-                liquidity_threshold=self._preset.liquidity_threshold,
-                volume=self._preset.volume,
-                difficulty=self._difficulty,
-                price_score=0.0,
-                days_score=0.0,
-                treds_bonus=0.15 if self._treds_used else 0.0,
                 step_reward=step_reward,
                 message="Agent rejected the negotiation",
                 reward=step_reward,
                 done=True,
-                metadata={"episode_id": self._state.episode_id, "task_name": self._active_task_name},
+                metadata=self._episode_meta(
+                    "reject_episode",
+                    success=False,
+                    termination_reason="agent_reject",
+                ),
             )
 
-        if action_type == "accept" and not auto_accept:
+        if action_type == "accept" and not auto_accept and not accepts_current_buyer_offer:
             self._state.step_count += 1
+            self._state.negotiation_round = self._state.step_count
             self._cumulative_reward += step_reward
             self._state.cumulative_reward = self._cumulative_reward
             self._state.message = "ACCEPT failed validation"
-            return NegotiationObservation(
-                round_number=self._state.step_count,
-                max_rounds=self._preset.max_rounds,
-                buyer_price=self._buyer_price,
-                buyer_days=self._buyer_days,
+            self._reward_debug_print("invalid_accept_mismatch", step_reward)
+            return self._obs_from_state(
                 buyer_accepted=False,
                 negotiation_done=True,
-                cost_threshold=self._preset.cost_threshold,
-                liquidity_threshold=self._preset.liquidity_threshold,
-                volume=self._preset.volume,
-                difficulty=self._difficulty,
-                price_score=0.0,
-                days_score=0.0,
-                treds_bonus=0.0,
                 step_reward=step_reward,
                 message="ACCEPT failed validation",
                 reward=step_reward,
                 done=True,
-                metadata={"episode_id": self._state.episode_id, "task_name": self._active_task_name},
+                metadata=self._episode_meta(
+                    "invalid_accept",
+                    success=False,
+                    termination_reason="invalid_accept",
+                ),
             )
 
-        if auto_accept or action_type == "accept":
+        if auto_accept or action_type == "accept" or accepts_current_buyer_offer:
             agreed_price = proposed_price if proposed_price >= self._buyer_price else self._buyer_price
             agreed_days = proposed_days
             self._deal_reached = True
             self._final_price = agreed_price
             self._final_days = agreed_days
             self._treds_used = use_treds or self._treds_used
-            terminal_reward = self._grade_current_task(agreed_price, agreed_days)
+            self._apply_terminal_outcome_to_state(agreed_price, agreed_days, action)
+            terminal_reward = self._terminal_reward()
 
             self._state.step_count += 1
+            self._state.negotiation_round = self._state.step_count
             self._cumulative_reward += terminal_reward
-            self._state.deal_reached = True
-            self._state.final_price = agreed_price
-            self._state.final_days = agreed_days
-            self._state.treds_used = self._treds_used
             self._state.cumulative_reward = self._cumulative_reward
             self._state.message = "Deal reached"
             self._state.buyer_price = self._buyer_price
             self._state.buyer_days = self._buyer_days
-            return NegotiationObservation(
-                round_number=self._state.step_count,
-                max_rounds=self._preset.max_rounds,
-                buyer_price=self._buyer_price,
-                buyer_days=self._buyer_days,
+            self._reward_debug_print("terminal_agreement", terminal_reward)
+            success = terminal_reward > 0.0
+            return self._obs_from_state(
                 buyer_accepted=True,
                 negotiation_done=True,
-                cost_threshold=self._preset.cost_threshold,
-                liquidity_threshold=self._preset.liquidity_threshold,
-                volume=self._preset.volume,
-                difficulty=self._difficulty,
-                price_score=0.0,
-                days_score=0.0,
-                treds_bonus=0.15 if (use_treds or self._treds_used) else 0.0,
                 step_reward=terminal_reward,
                 message="Deal reached",
                 reward=terminal_reward,
                 done=True,
-                metadata={"episode_id": self._state.episode_id, "task_name": self._active_task_name},
+                metadata=self._episode_meta(
+                    "terminal_agreement",
+                    success=success,
+                    termination_reason="buyer_accepted_deal",
+                ),
             )
 
+        prior_buyer_price = float(self._buyer_price)
+        prior_buyer_days = int(self._buyer_days)
+
         price_jitter = self._rng.uniform(0.85, 1.15)
-        price_drop = self._buyer_price * self._base_concede * price_jitter
-        next_price = round(max(self._preset.cost_threshold, min(self._buyer_price, proposed_price) - price_drop), 2)
-        day_drop = self._rng.randint(self._preset.day_step_low, self._preset.day_step_high)
+        price_drop = (
+            self._buyer_price
+            * self._base_concede
+            * price_jitter
+            * power_mult
+        )
+        next_price = round(
+            max(tc.cost_threshold, min(self._buyer_price, proposed_price) - price_drop),
+            2,
+        )
+        day_drop = max(
+            1,
+            int(round(self._rng.randint(tc.day_step_low, tc.day_step_high) * power_mult)),
+        )
         next_days = max(self._buyer_min_days_floor, self._buyer_days - day_drop)
 
         self._buyer_price = next_price
         self._buyer_days = next_days
         self._state.step_count += 1
+        self._state.negotiation_round = self._state.step_count
 
-        threshold_days = float(self._preset.liquidity_threshold)
-        buyer_days = float(self._buyer_days)
-        cost_floor = float(self._preset.cost_threshold)
-        list_price = float(self._initial_buyer_price)
-        days_progress = max(0.0, (threshold_days - buyer_days) / max(threshold_days, 1e-9))
-        price_quality = max(0.0, (proposed_price - cost_floor) / max(list_price - cost_floor, 1e-9))
-        step_reward = round(0.01 + 0.04 * days_progress * price_quality, 4)
+        step_reward, reward_branch = self._compute_reward(
+            proposed_price,
+            proposed_days,
+            current_buyer_price=prior_buyer_price,
+            current_buyer_days=prior_buyer_days,
+        )
 
         self._cumulative_reward += step_reward
         self._state.cumulative_reward = self._cumulative_reward
@@ -412,31 +425,32 @@ class SMENegotiatorEnvironment(Environment):
         self._state.buyer_days = self._buyer_days
         self._state.message = message
 
-        done = self._state.step_count >= self._preset.max_rounds
+        self._reward_debug_print(reward_branch, step_reward)
+
+        done = self._check_done()
+        termination_reason = "ongoing"
+        success = False
         if done:
-            self._state.message = "Maximum rounds reached"
-            terminal_reward = self._grade_current_task(self._buyer_price, self._buyer_days)
+            self._state.message = "Maximum rounds reached — no agreement"
+            terminal_reward = self._terminal_reward()
             self._cumulative_reward = self._cumulative_reward - step_reward + terminal_reward
             self._state.cumulative_reward = self._cumulative_reward
             step_reward = terminal_reward
+            reward_branch = f"max_rounds_terminal_grader:{terminal_reward:.4f}"
+            self._reward_debug_print(reward_branch, step_reward)
+            termination_reason = "max_rounds_no_deal"
+            success = False
 
-        return NegotiationObservation(
-            round_number=self._state.step_count,
-            max_rounds=self._preset.max_rounds,
-            buyer_price=self._buyer_price,
-            buyer_days=self._buyer_days,
+        return self._obs_from_state(
             buyer_accepted=False,
             negotiation_done=done,
-            cost_threshold=self._preset.cost_threshold,
-            liquidity_threshold=self._preset.liquidity_threshold,
-            volume=self._preset.volume,
-            difficulty=self._difficulty,
-            price_score=0.0,
-            days_score=0.0,
-            treds_bonus=0.15 if use_treds else 0.0,
             step_reward=step_reward,
             message=self._state.message,
             reward=step_reward,
             done=done,
-            metadata={"episode_id": self._state.episode_id, "task_name": self._active_task_name},
+            metadata=self._episode_meta(
+                reward_branch,
+                success=success,
+                termination_reason=termination_reason,
+            ),
         )
