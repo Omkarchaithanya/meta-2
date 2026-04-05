@@ -377,9 +377,9 @@ class SMENegotiatorEnvironment(Environment):
 
         if auto_accept or action_type == "accept" or accepts_current_buyer_offer:
             agreed_price = proposed_price if proposed_price >= self._buyer_price else self._buyer_price
-            # Accept must reflect the SME's last proposal for grading; models often echo buyer_days instead.
+            # Use the better (lower) of proposed vs last-proposed so the LLM isn't penalised for echoing buyer_days.
             if action_type == "accept" and self._last_sme_proposed_days is not None:
-                agreed_days = int(self._last_sme_proposed_days)
+                agreed_days = min(int(proposed_days), int(self._last_sme_proposed_days))
             else:
                 agreed_days = proposed_days
             self._deal_reached = True

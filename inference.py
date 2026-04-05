@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Union
 
@@ -53,11 +54,30 @@ When you send action_type="accept", payment_days MUST exactly match the payment_
 IMMEDIATELY PREVIOUS propose action. Never copy the buyer's current payment_days into an accept
 (unless that number is also what you last proposed). Mismatches invalidate the deal on strict tasks.
 Example: if you last proposed payment_days=60, your accept must also use payment_days=60.
+Therefore: ALWAYS propose at your target payment_days FIRST, then accept on the NEXT step.
 
 CRITICAL — reject:
 NEVER use action_type="reject" unless you intentionally end with no deal. Rejection terminates the
 episode immediately with zero reward. Prefer action_type="propose" to counter-offer, or
 action_type="accept" to agree.
+
+STRATEGY by task difficulty:
+- easy: Propose payment_days=60 immediately (= LiquidityThreshold). Keep price ABOVE CostThreshold.
+  Jump directly to target — do NOT reduce by 1-2 days per step.
+- medium: Target payment_days<=45. Set propose_late_payment_penalty_clause=true in EVERY proposal.
+  This unlocks partial credit even if days aren't perfect.
+- hard: ALWAYS set propose_dynamic_discounting=true and dynamic_discount_annual_rate=0.02 in EVERY action.
+  Target payment_days=30. The grader scores ONLY on dynamic discounting NPV — NOT on payment_days
+  or use_treds alone. High discount rates (>0.05) produce negative NPV and zero reward.
+  Without propose_dynamic_discounting=true you will score 0.
+
+CRITICAL — price floor:
+Your price must ALWAYS stay above cost_threshold from the observation. Never propose or accept
+a price below cost_threshold — this causes reward penalty.
+
+CRITICAL — negotiation speed:
+You have only 10-16 rounds total. Make AGGRESSIVE proposals.
+Do NOT reduce payment_days by 1-2 per step — jump directly to your target.
 """.strip()
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
@@ -109,19 +129,65 @@ def format_observation(obs: Dict[str, Any]) -> str:
     )
 
 
-def _safe_fallback_action(observation: Any) -> Dict[str, Any]:
+def _safe_fallback_action(observation: Any, task_name: str = "", round_number: int = 0) -> Dict[str, Any]:
+    is_hard = "hard" in task_name.lower()
+    is_medium = "medium" in task_name.lower()
+
+    obs_dict = _observation_to_dict(observation) if not isinstance(observation, dict) else observation
+    buyer_days = int(obs_dict.get("buyer_days", 0))
+    liquidity = int(obs_dict.get("liquidity_threshold", 0))
+    buyer_price = float(obs_dict.get("buyer_price", 0.0))
+    cost = float(obs_dict.get("cost_threshold", 0.0))
+    max_rounds = int(obs_dict.get("max_rounds", 16))
+
+    terms_acceptable = buyer_days <= liquidity and buyer_price >= cost
+    near_end = round_number >= max_rounds - 3  # accept in last 3 rounds
+
+    should_accept = terms_acceptable or near_end
+
+    target_days = 30 if is_hard else liquidity
+
     return {
-        "action_type": "propose",
-        "price": round(max(float(observation.cost_threshold) + 1.0, float(observation.buyer_price) * 0.99), 2),
-        "payment_days": int(max(int(observation.liquidity_threshold), int(observation.buyer_days) - 5)),
-        "use_treds": bool(int(observation.buyer_days) > int(observation.liquidity_threshold) + 20),
-        "reason": "Fallback action due to model output issue",
+        "action_type": "accept" if should_accept else "propose",
+        "price": round(max(cost + 1.0, buyer_price * 0.99), 2),
+        "payment_days": target_days,
+        "use_treds": False,
+        "reason": "Fallback action",
+        "propose_dynamic_discounting": is_hard,
+        "dynamic_discount_annual_rate": 0.02 if is_hard else 0.0,
+        "propose_late_payment_penalty_clause": is_medium,
     }
 
 
+def _task_hint(task_name: str, observation: Dict[str, Any]) -> str:
+    liq = observation.get("liquidity_threshold", 60)
+    cost = observation.get("cost_threshold", 80)
+    buyer_days = observation.get("buyer_days", 90)
+    t = task_name.lower()
+    if "easy" in t:
+        return (
+            f"TARGET: payment_days<={liq}. Propose payment_days={liq} with price above {cost}. "
+            f"Reduce aggressively (5-10 days/step). Once you propose payment_days={liq}, ACCEPT next step."
+        )
+    if "medium" in t:
+        return (
+            f"TARGET: payment_days<={liq}. Set propose_late_payment_penalty_clause=true always. "
+            f"Reduce aggressively (5-8 days/step). Propose payment_days={liq} then ACCEPT next step."
+        )
+    if "hard" in t:
+        return (
+            f"TARGET: payment_days=30. MUST set propose_dynamic_discounting=true, "
+            f"dynamic_discount_annual_rate=0.02. Price must stay above {cost}. "
+            f"Jump aggressively from {buyer_days} to 30. Do NOT inch down by 1 day."
+        )
+    return ""
+
+
 def get_agent_action(observation: Dict[str, Any], history: List[dict], task_name: str) -> Dict[str, Any]:
+    hint = _task_hint(task_name, observation)
     user_message = (
         f"Task={task_name}\n"
+        f"{hint}\n"
         f"Current observation:\n{format_observation(observation)}\n"
         "Return only JSON action."
     )
@@ -225,7 +291,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
             except Exception as e:
                 print(
                     f"[ERROR] LLM call failed: {type(e).__name__}: {e}",
-                    flush=True,
+                    file=sys.stderr, flush=True,
                 )
                 logger.warning(
                     "LLM call failed; using fallback action: %s: %s",
@@ -235,7 +301,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
                 if os.getenv("INFERENCE_DEBUG_LLM", "").strip().lower() in ("1", "true", "yes"):
                     logger.exception("LLM traceback (INFERENCE_DEBUG_LLM=1)")
                 llm_error = str(e)
-                action_payload = _safe_fallback_action(observation)
+                action_payload = _safe_fallback_action(observation, task_name, round_number)
 
             action = _to_model_action(action_payload, observation)
             action_json = json.dumps(action.model_dump(), ensure_ascii=True)
@@ -287,13 +353,13 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
 async def main() -> None:
     """Run three episodes per difficulty and write a compact results file."""
 
-    print(f"[CONFIG] LLM API_BASE_URL={API_BASE_URL}", flush=True)
-    print(f"[CONFIG] MODEL_NAME={MODEL_NAME}", flush=True)
+    print(f"[CONFIG] LLM API_BASE_URL={API_BASE_URL}", file=sys.stderr, flush=True)
+    print(f"[CONFIG] MODEL_NAME={MODEL_NAME}", file=sys.stderr, flush=True)
     if "router.huggingface.co" in API_BASE_URL:
         print(
             "[CONFIG] Hugging Face router uses /v1/chat/completions — pick a chat/instruct model id "
             "(e.g. Qwen/Qwen2.5-7B-Instruct). If you see 'not a chat model', change MODEL_NAME in .env.",
-            flush=True,
+            file=sys.stderr, flush=True,
         )
     if _llm_url_looks_local(API_BASE_URL):
         print(
@@ -301,17 +367,17 @@ async def main() -> None:
             "WinError 10061 / 'connection refused' means nothing is listening there — "
             "start your local OpenAI-compatible server (Ollama, LM Studio, vLLM, …), OR "
             "set API_BASE_URL=https://router.huggingface.co/v1 and HF_TOKEN for Hugging Face Inference.",
-            flush=True,
+            file=sys.stderr, flush=True,
         )
     if not HF_TOKEN and not _llm_url_looks_local(API_BASE_URL):
         print(
             "[WARN] HF_TOKEN is empty. Hugging Face router usually requires HF_TOKEN in .env.",
-            flush=True,
+            file=sys.stderr, flush=True,
         )
     elif not HF_TOKEN and _llm_url_looks_local(API_BASE_URL):
         print(
             "[WARN] HF_TOKEN is empty; OK only if your local server does not require a key.",
-            flush=True,
+            file=sys.stderr, flush=True,
         )
 
     results: Dict[str, Any] = {
@@ -342,15 +408,28 @@ async def main() -> None:
             "  Or run inference without a server:\n"
             "    set OPENENV_IN_PROCESS=1\n"
             "    uv run python inference.py\n",
-            flush=True,
+            file=sys.stderr, flush=True,
         )
         raise SystemExit(1) from exc
 
 
 async def _run_all_episodes(env: EnvClient, results: Dict[str, Any]) -> None:
-    for difficulty in ["EASY", "MEDIUM", "HARD"]:
+    all_difficulties = ["EASY", "MEDIUM", "HARD"]
+    task_filter = os.getenv("TASK_FILTER", "").strip().upper()
+    if task_filter:
+        all_difficulties = [d for d in all_difficulties if d == task_filter]
+        if not all_difficulties:
+            print(f"[WARN] TASK_FILTER={task_filter!r} matched no tasks, running all.", file=sys.stderr, flush=True)
+            all_difficulties = ["EASY", "MEDIUM", "HARD"]
+
+    all_seeds = [1000, 1001, 1002]
+    num_episodes = os.getenv("NUM_EPISODES", "").strip()
+    if num_episodes:
+        all_seeds = all_seeds[:int(num_episodes)]
+
+    for difficulty in all_difficulties:
         episode_results: List[Dict[str, Any]] = []
-        for seed in [1000, 1001, 1002]:
+        for seed in all_seeds:
             episode_results.append(await run_episode(env, difficulty, seed))
 
         scores = [episode["final_score"] for episode in episode_results]
@@ -397,5 +476,6 @@ def _finalize_results_summary(results: Dict[str, Any]) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(main())
