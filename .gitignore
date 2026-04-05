@@ -83,3 +83,5 @@ README_SPACES.md
 # Temporary files
 *.tmp
 temp/
+stdout.txt
+stderr.txt

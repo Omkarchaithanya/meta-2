@@ -23,14 +23,48 @@ from server.environment import SMENegotiatorEnvironment
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# Allow .env to override pre-set shell vars (e.g. stale Groq API_BASE_URL in the same terminal).
+load_dotenv(override=True)
 
 # LLM: Hugging Face OpenAI-compatible router by default (override with API_BASE_URL in .env)
 API_BASE_URL = (os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1").strip()
-HF_TOKEN = (os.getenv("HF_TOKEN") or "").strip() or None
+# Hackathon / dashboard may set either HF_TOKEN or API_KEY for the OpenAI client.
+HF_TOKEN = (os.getenv("HF_TOKEN") or os.getenv("API_KEY") or "").strip() or None
 # HF Router chat/completions only accepts models exposed as *chat* models — not every Hub id works.
-MODEL_NAME = (os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-7B-Instruct").strip()
+MODEL_NAME = (os.getenv("MODEL_NAME") or "meta-llama/Llama-3.1-8B-Instruct").strip()
+# Docker / HF Space image tag (validator builds). Inference uses HTTP or in-process env — not from_docker_image().
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "openenv-sme-negotiator:latest")
+
+# Printed once per process when HF Inference returns HTTP 402 (quota / billing — not fixable in Python).
+_PRINTED_HF_402_HINT = False
+
+
+def _is_hf_inference_402(exc: BaseException) -> bool:
+    return "402" in str(exc)
+
+
+def _maybe_print_hf_402_hint(exc: BaseException) -> None:
+    """Explain 402 once: Inference Providers billing, not a bug in this repo."""
+    global _PRINTED_HF_402_HINT
+    if _PRINTED_HF_402_HINT or not _is_hf_inference_402(exc):
+        return
+    _PRINTED_HF_402_HINT = True
+    print(
+        "[WARN] Hugging Face returned HTTP 402: Inference Providers quota/credits exhausted for this token.\n"
+        "  This is decided on HF servers — application code cannot turn it into a successful LLM call.\n"
+        "  Fix: https://huggingface.co/settings/billing (add credits, prepaid, or PRO) or use a hackathon token.\n"
+        "  Dev without HF: set API_BASE_URL=http://127.0.0.1:11434/v1 MODEL_NAME=llama3.2 (Ollama) and empty HF_TOKEN.\n"
+        "  Optional: INFERENCE_SKIP_LLM_AFTER_402=1 skips further router calls after the first 402 (fallback only).\n",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    v = os.getenv(name, "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
 
 
 def _llm_url_looks_local(url: str) -> bool:
@@ -70,6 +104,9 @@ STRATEGY by task difficulty:
   Target payment_days=30. The grader scores ONLY on dynamic discounting NPV — NOT on payment_days
   or use_treds alone. High discount rates (>0.05) produce negative NPV and zero reward.
   Without propose_dynamic_discounting=true you will score 0.
+  HARD — closing: On the step IMMEDIATELY AFTER any propose where you set dynamic discounting, you MUST
+  send action_type=\"accept\" with the SAME price and payment_days as that propose (do not propose again).
+  Repeating propose until max_rounds yields success=false.
 
 CRITICAL — price floor:
 Your price must ALWAYS stay above cost_threshold from the observation. Never propose or accept
@@ -80,7 +117,9 @@ You have only 10-16 rounds total. Make AGGRESSIVE proposals.
 Do NOT reduce payment_days by 1-2 per step — jump directly to your target.
 """.strip()
 
-client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+# Local OpenAI-compatible servers (Ollama, LM Studio) do not need a real key; HF router does.
+_OPENAI_API_KEY = HF_TOKEN or ("not-needed" if _llm_url_looks_local(API_BASE_URL) else "")
+client = OpenAI(base_url=API_BASE_URL, api_key=_OPENAI_API_KEY)
 
 
 class InProcessSMENegotiatorBridge:
@@ -178,7 +217,8 @@ def _task_hint(task_name: str, observation: Dict[str, Any]) -> str:
         return (
             f"TARGET: payment_days=30. MUST set propose_dynamic_discounting=true, "
             f"dynamic_discount_annual_rate=0.02. Price must stay above {cost}. "
-            f"Jump aggressively from {buyer_days} to 30. Do NOT inch down by 1 day."
+            f"Jump aggressively from {buyer_days} to 30. Do NOT inch down by 1 day. "
+            f"After ONE such propose, next action MUST be accept with identical price and payment_days."
         )
     return ""
 
@@ -233,6 +273,57 @@ def get_agent_action(observation: Dict[str, Any], history: List[dict], task_name
         return parsed.model_dump()
 
 
+def _parse_last_assistant_action(history: List[dict]) -> Dict[str, Any] | None:
+    for m in reversed(history):
+        if m.get("role") != "assistant":
+            continue
+        raw = (m.get("content") or "").strip()
+        try:
+            obj = json.loads(raw)
+            return obj if isinstance(obj, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _hard_two_step_policy_enabled() -> bool:
+    return os.getenv("INFERENCE_HARD_TWO_STEP", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _coerce_hard_accept_after_propose(
+    action: Dict[str, Any],
+    history: List[dict],
+    task_name: str,
+    round_number: int,
+) -> Dict[str, Any]:
+    """If last action was a qualifying propose, force accept with same terms (env accepts_own_proposal)."""
+    if not _hard_two_step_policy_enabled():
+        return action
+    if "hard" not in task_name.lower() or round_number < 1:
+        return action
+    prev = _parse_last_assistant_action(history)
+    if not prev:
+        return action
+    if str(prev.get("action_type", "")).lower() != "propose":
+        return action
+    if not prev.get("propose_dynamic_discounting"):
+        return action
+    if str(action.get("action_type", "propose")).lower() == "accept":
+        return action
+    p = float(prev.get("price", 0.0))
+    d = int(prev.get("payment_days", 0))
+    return {
+        "action_type": "accept",
+        "price": p,
+        "payment_days": d,
+        "use_treds": bool(prev.get("use_treds", False)),
+        "reason": "Accept prior propose (hard two-step policy; matches env contract).",
+        "propose_late_payment_penalty_clause": bool(prev.get("propose_late_payment_penalty_clause", False)),
+        "propose_dynamic_discounting": True,
+        "dynamic_discount_annual_rate": float(prev.get("dynamic_discount_annual_rate", 0.02)),
+    }
+
+
 def _to_model_action(action_payload: Dict[str, Any], observation: Any) -> NegotiationAction:
     action_type = str(action_payload.get("action_type", "propose")).lower()
     if action_type not in {"propose", "accept", "reject"}:
@@ -281,28 +372,45 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
             flush=True,
         )
 
+        # After first HF 402, optionally stop calling the router (still not a "fix" — avoids spam & wasted calls).
+        skip_llm_after_402 = _env_truthy("INFERENCE_SKIP_LLM_AFTER_402", False)
+        llm_blocked_402 = False
+
         # Termination is driven by the environment (``done``), including max rounds — do not stop early here.
         while not result.done:
             obs_dict = _observation_to_dict(observation)
 
             llm_error: str | None = None
-            try:
-                action_payload = get_agent_action(obs_dict, history, task_name)
-            except Exception as e:
-                print(
-                    f"[ERROR] LLM call failed: {type(e).__name__}: {e}",
-                    file=sys.stderr, flush=True,
-                )
-                logger.warning(
-                    "LLM call failed; using fallback action: %s: %s",
-                    type(e).__name__,
-                    e,
-                )
-                if os.getenv("INFERENCE_DEBUG_LLM", "").strip().lower() in ("1", "true", "yes"):
-                    logger.exception("LLM traceback (INFERENCE_DEBUG_LLM=1)")
-                llm_error = str(e)
+            if llm_blocked_402:
                 action_payload = _safe_fallback_action(observation, task_name, round_number)
+                llm_error = (
+                    "HF Inference 402 — further LLM calls skipped (INFERENCE_SKIP_LLM_AFTER_402=1). "
+                    "Resolve quota at https://huggingface.co/settings/billing or use local Ollama."
+                )
+            else:
+                try:
+                    action_payload = get_agent_action(obs_dict, history, task_name)
+                except Exception as e:
+                    _maybe_print_hf_402_hint(e)
+                    print(
+                        f"[ERROR] LLM call failed: {type(e).__name__}: {e}",
+                        file=sys.stderr, flush=True,
+                    )
+                    logger.warning(
+                        "LLM call failed; using fallback action: %s: %s",
+                        type(e).__name__,
+                        e,
+                    )
+                    if os.getenv("INFERENCE_DEBUG_LLM", "").strip().lower() in ("1", "true", "yes"):
+                        logger.exception("LLM traceback (INFERENCE_DEBUG_LLM=1)")
+                    llm_error = str(e)
+                    if skip_llm_after_402 and _is_hf_inference_402(e):
+                        llm_blocked_402 = True
+                    action_payload = _safe_fallback_action(observation, task_name, round_number)
 
+            action_payload = _coerce_hard_accept_after_propose(
+                action_payload, history, task_name, round_number
+            )
             action = _to_model_action(action_payload, observation)
             action_json = json.dumps(action.model_dump(), ensure_ascii=True)
 
@@ -417,7 +525,9 @@ async def _run_all_episodes(env: EnvClient, results: Dict[str, Any]) -> None:
     all_difficulties = ["EASY", "MEDIUM", "HARD"]
     task_filter = os.getenv("TASK_FILTER", "").strip().upper()
     if task_filter:
-        all_difficulties = [d for d in all_difficulties if d == task_filter]
+        allowed = {p.strip() for p in task_filter.split(",") if p.strip()}
+        if allowed:
+            all_difficulties = [d for d in all_difficulties if d in allowed]
         if not all_difficulties:
             print(f"[WARN] TASK_FILTER={task_filter!r} matched no tasks, running all.", file=sys.stderr, flush=True)
             all_difficulties = ["EASY", "MEDIUM", "HARD"]
