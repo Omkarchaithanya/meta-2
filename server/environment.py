@@ -46,8 +46,14 @@ class SMENegotiatorEnvironment(Environment):
         self._last_sme_proposed_days: Optional[int] = None
         self._last_sme_proposed_price: Optional[float] = None
 
+    @property
     def state(self) -> Optional[NegotiationState]:
-        """Return the current episode state."""
+        """Current episode state exposed as attribute for OpenEnv app serialization."""
+
+        return self._state
+
+    def get_state(self) -> Optional[NegotiationState]:
+        """Backward-compatible state accessor for direct Python usage."""
 
         return self._state
 

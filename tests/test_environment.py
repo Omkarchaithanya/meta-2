@@ -85,3 +85,13 @@ def test_choose_action_uses_current_observation() -> None:
     assert action.action_type == "propose"
     assert action.price >= observation.cost_threshold
     assert action.payment_days <= observation.liquidity_threshold
+
+
+def test_state_exposed_as_attribute() -> None:
+    env = SMENegotiatorEnvironment()
+
+    assert env.state is None
+    env.reset(seed=42, difficulty="easy")
+
+    assert env.state is not None
+    assert hasattr(env.state, "episode_id")
