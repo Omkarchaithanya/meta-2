@@ -60,6 +60,15 @@ If you want an environment where an agent must balance price, payment days, work
 
 </div>
 
+<p align="center">
+  <img src="EconomicTimes.png"
+       alt="Economic Times headline: Rs 8.1 lakh crore stuck in delayed MSME payments"
+       width="420">
+  <img src="Razorpay.png"
+       alt="Razorpay Fix My Itch: SMEs struggling to negotiate fair payment terms"
+       width="420">
+</p>
+
 > [!IMPORTANT]
 > **The core pain:** A supplier ships goods. The buyer demands 60–90+ day settlement. The SME must still pay staff, vendors, GST, rent, and loan EMIs within ~30 days. That cash-flow gap — multiplied across crores of enterprises — is what this environment makes trainable.
 
