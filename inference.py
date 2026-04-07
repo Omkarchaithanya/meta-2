@@ -154,10 +154,10 @@ def _format_step_error(llm_error: str | None) -> str:
     return json.dumps(_clip_ascii_text(llm_error, _MAX_ERROR_CHARS), ensure_ascii=True)
 
 
-def _format_end_line(success: bool, steps: int, score: float, rewards: List[float]) -> str:
+def _format_end_line(success: bool, steps: int, rewards: List[float]) -> str:
     return (
         f'[END] success={"true" if success else "false"} steps={steps} '
-        f'score={score:.2f} rewards={",".join(f"{r:.2f}" for r in rewards)}'
+        f'rewards={",".join(f"{r:.2f}" for r in rewards)}'
     )
 
 
@@ -696,7 +696,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
             success = bool(result.done and final_score > 0.0)
     finally:
         total_reward = sum(all_rewards)
-        print(_format_end_line(success, round_number, final_score, all_rewards), flush=True)
+        print(_format_end_line(success, round_number, all_rewards), flush=True)
 
     return {
         "difficulty": difficulty,
