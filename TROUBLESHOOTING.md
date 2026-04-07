@@ -212,6 +212,22 @@ for episode in range(num_episodes):
 
 ## Inference Runtime Issues
 
+### Note: `REWARD_DEBUG` and evaluator output
+
+`[REWARD_DEBUG]` lines are intentionally printed to **stderr**, not stdout. Judge tooling should parse only stdout `[START]`, `[STEP]`, and `[END]` lines.
+
+If you want quieter local logs:
+
+```bash
+# Linux/Mac
+export REWARD_DEBUG=0
+
+# Windows PowerShell
+$env:REWARD_DEBUG="0"
+```
+
+---
+
 ### Problem: inference.py Hangs or Freezes
 
 **Error**: Script runs but doesn't output anything for 5+ minutes

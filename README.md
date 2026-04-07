@@ -156,6 +156,7 @@ asyncio.run(main())
 ### Rewards (actual behavior)
 
 - **Step rewards**: Non-terminal steps receive a **bounded partial reward** from `SMENegotiatorEnvironment._compute_reward` (progress signal). Set `REWARD_DEBUG=0` to silence `[REWARD_DEBUG]` logs.
+- **Output streams**: `[START]`, `[STEP]`, `[END]` lines are emitted on `stdout` for evaluators; `[REWARD_DEBUG]` is emitted on `stderr` and is not part of judge parsing.
 - **Terminal reward**: Deterministic **task grader** on `NegotiationState` in `sme_negotiator_env/graders.py` (0.0–1.0).
 
 ### Deterministic graders (terminal score)
@@ -166,7 +167,9 @@ asyncio.run(main())
 | Medium | `payment-terms-medium` | Agreed days ≤ **45d** (liquidity cap), or stricter band with **late payment penalty** flag |
 | Hard | `payment-terms-hard` | **Dynamic discounting** agreed (`propose_dynamic_discounting`) — score from **NPV vs status quo** (`compute_financing_npv_vs_status_quo`). **Not** graded on `use_treds` alone |
 
-`use_treds` still affects **simulation** (buyer day floor) and observations; for **hard task terminal score**, optimize **dynamic discounting + NPV**, not TReDS alone.
+`use_treds` still affects **simulation** (buyer day floor) and observations; for **hard task terminal score**, optimize **dynamic discounting + NPV**, not TReDS alone. For medium/hard trajectories with large payment-day gaps, include at least one `use_treds=true` proposal so the mechanism is exercised.
+
+The default inference runner includes a conservative guardrail: in medium/hard tasks, if `buyer_days > liquidity_threshold + 10` during early rounds, one `propose` action is upgraded to `use_treds=true` so the TReDS mechanic is not left dormant.
 
 ### RL training stacks
 
@@ -421,6 +424,7 @@ Outputs are written to `inference_results.json` (gitignored by default).
 | `MODEL_NAME` | Chat-capable model id for `chat/completions` (e.g. `Qwen/Qwen2.5-7B-Instruct` on HF Router; some Mistral ids are not routed as chat) |
 | `OPENENV_BASE_URL` | Negotiation server (default `http://127.0.0.1:7860`) |
 | `OPENENV_IN_PROCESS` | `1` = no separate server |
+| `INFERENCE_HARD_TWO_STEP` | Hard-task accept shortcut toggle. **Default disabled** (`0`) for benchmark integrity; set `1` only for debugging/smoke runs. |
 
 ## Contact & support
 

@@ -31,12 +31,14 @@ API_BASE_URL = (os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1")
 # Hackathon / dashboard may set either HF_TOKEN or API_KEY for the OpenAI client.
 HF_TOKEN = (os.getenv("HF_TOKEN") or os.getenv("API_KEY") or "").strip() or None
 # HF Router chat/completions only accepts models exposed as *chat* models — not every Hub id works.
-MODEL_NAME = (os.getenv("MODEL_NAME") or "meta-llama/Llama-3.1-8B-Instruct").strip()
+MODEL_NAME = (os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-7B-Instruct").strip()
 # Docker / HF Space image tag (validator builds). Inference uses HTTP or in-process env — not from_docker_image().
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "openenv-sme-negotiator:latest")
 
 # Printed once per process when HF Inference returns HTTP 402 (quota / billing — not fixable in Python).
 _PRINTED_HF_402_HINT = False
+_MAX_REASON_CHARS = 160
+_MAX_ERROR_CHARS = 240
 
 
 def _is_hf_inference_402(exc: BaseException) -> bool:
@@ -104,9 +106,24 @@ STRATEGY by task difficulty:
   Target payment_days=30. The grader scores ONLY on dynamic discounting NPV — NOT on payment_days
   or use_treds alone. High discount rates (>0.05) produce negative NPV and zero reward.
   Without propose_dynamic_discounting=true you will score 0.
-  HARD — closing: On the step IMMEDIATELY AFTER any propose where you set dynamic discounting, you MUST
-  send action_type=\"accept\" with the SAME price and payment_days as that propose (do not propose again).
-  Repeating propose until max_rounds yields success=false.
+    HARD — negotiation style: buyer power is high, so expect multi-round bargaining.
+    Keep dynamic discounting enabled while improving terms over multiple rounds; accept only when terms are favorable.
+
+CRITICAL — TReDS usage policy:
+- If buyer payment_days is materially above your liquidity threshold (usually by 10+ days), explicitly consider
+    use_treds=true to unlock invoice financing and reduce liquidity stress.
+- In medium/hard tasks, when buyer days remain stubbornly high, include at least one proposal with use_treds=true.
+- If you decide not to use TReDS, explain briefly in reason (e.g., days already near liquidity target).
+
+FEW-SHOT TReDS example (medium):
+Observation: buyer_days=60, liquidity_threshold=45, cost_threshold=80.
+Valid action JSON:
+{"action_type":"propose","price":95.0,"payment_days":50,"use_treds":true,"reason":"Use TReDS to bridge working-capital gap while converging on terms","propose_late_payment_penalty_clause":true}
+
+FEW-SHOT TReDS example (hard):
+Observation: buyer_days=100, liquidity_threshold=55, cost_threshold=78.
+Valid action JSON:
+{"action_type":"propose","price":89.0,"payment_days":30,"use_treds":true,"reason":"Pair TReDS with dynamic discounting for cash-flow resilience","propose_dynamic_discounting":true,"dynamic_discount_annual_rate":0.02}
 
 CRITICAL — price floor:
 Your price must ALWAYS stay above cost_threshold from the observation. Never propose or accept
@@ -116,6 +133,25 @@ CRITICAL — negotiation speed:
 You have only 10-16 rounds total. Make AGGRESSIVE proposals.
 Do NOT reduce payment_days by 1-2 per step — jump directly to your target.
 """.strip()
+
+
+def _clip_ascii_text(value: Any, max_len: int) -> str:
+    text = str(value)
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "~"
+
+
+def _serialize_step_action(action: NegotiationAction) -> str:
+    """Serialize the action JSON on one line with compact separators for log safety."""
+    return json.dumps(action.model_dump(), ensure_ascii=True, separators=(",", ":"))
+
+
+def _format_step_error(llm_error: str | None) -> str:
+    """Return parser-safe [STEP] error field: null token or compact JSON string."""
+    if llm_error is None:
+        return "null"
+    return json.dumps(_clip_ascii_text(llm_error, _MAX_ERROR_CHARS), ensure_ascii=True)
 
 # Local OpenAI-compatible servers (Ollama, LM Studio) do not need a real key; HF router does.
 _OPENAI_API_KEY = HF_TOKEN or ("not-needed" if _llm_url_looks_local(API_BASE_URL) else "")
@@ -218,9 +254,48 @@ def _task_hint(task_name: str, observation: Dict[str, Any]) -> str:
             f"TARGET: payment_days=30. MUST set propose_dynamic_discounting=true, "
             f"dynamic_discount_annual_rate=0.02. Price must stay above {cost}. "
             f"Jump aggressively from {buyer_days} to 30. Do NOT inch down by 1 day. "
-            f"After ONE such propose, next action MUST be accept with identical price and payment_days."
+            f"Maintain dynamic discounting and negotiate across multiple rounds; avoid forced immediate accept."
         )
     return ""
+
+
+def _maybe_enable_treds_guardrail(
+    action_payload: Dict[str, Any],
+    observation: Dict[str, Any],
+    task_name: str,
+    round_number: int,
+) -> Dict[str, Any]:
+    """Guarantee at least one TReDS attempt in medium/hard when day-gap pressure is high."""
+    t = task_name.lower()
+    if "medium" not in t and "hard" not in t:
+        return action_payload
+
+    # Force early so the environment mechanic can influence later rounds.
+    if round_number > 1:
+        return action_payload
+
+    if str(action_payload.get("action_type", "propose")).lower() != "propose":
+        return action_payload
+
+    buyer_days = int(observation.get("buyer_days", 0))
+    liquidity = int(observation.get("liquidity_threshold", 0))
+    if buyer_days <= liquidity + 10:
+        return action_payload
+
+    if bool(action_payload.get("use_treds", False)):
+        return action_payload
+
+    out = dict(action_payload)
+    out["use_treds"] = True
+    prior_reason = _clip_ascii_text(out.get("reason", ""), _MAX_REASON_CHARS)
+    if prior_reason:
+        out["reason"] = _clip_ascii_text(
+            f"{prior_reason} | Guardrail: activate TReDS due to large day-gap.",
+            _MAX_REASON_CHARS,
+        )
+    else:
+        out["reason"] = "Guardrail: activate TReDS due to large day-gap."
+    return out
 
 
 def get_agent_action(observation: Dict[str, Any], history: List[dict], task_name: str) -> Dict[str, Any]:
@@ -258,7 +333,7 @@ def get_agent_action(observation: Dict[str, Any], history: List[dict], task_name
             "price": float(action.get("price", observation.get("buyer_price", 0.0))),
             "payment_days": int(action.get("payment_days", observation.get("buyer_days", 0))),
             "use_treds": bool(action.get("use_treds", False)),
-            "reason": str(action.get("reason", "")),
+            "reason": _clip_ascii_text(action.get("reason", ""), _MAX_REASON_CHARS),
         }
         if "propose_late_payment_penalty_clause" in action:
             out["propose_late_payment_penalty_clause"] = bool(action.get("propose_late_payment_penalty_clause"))
@@ -287,7 +362,8 @@ def _parse_last_assistant_action(history: List[dict]) -> Dict[str, Any] | None:
 
 
 def _hard_two_step_policy_enabled() -> bool:
-    return os.getenv("INFERENCE_HARD_TWO_STEP", "1").strip().lower() not in ("0", "false", "no", "off")
+    # Default disabled to preserve genuine hard-task dynamics and avoid shortcut behavior.
+    return os.getenv("INFERENCE_HARD_TWO_STEP", "0").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _coerce_hard_accept_after_propose(
@@ -332,7 +408,7 @@ def _to_model_action(action_payload: Dict[str, Any], observation: Any) -> Negoti
     price = float(action_payload.get("price", observation.buyer_price))
     payment_days = int(action_payload.get("payment_days", observation.buyer_days))
     use_treds = bool(action_payload.get("use_treds", False))
-    reason = str(action_payload.get("reason", "Model-selected action"))
+    reason = _clip_ascii_text(action_payload.get("reason", "Model-selected action"), _MAX_REASON_CHARS)
 
     return NegotiationAction(
         action_type=action_type,
@@ -359,6 +435,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
     all_rewards: List[float] = []
     round_number = 0
     success = False
+    forced_hard_accepts = 0
     result: Any = None
     observation: Any = None
     final_score = 0.0
@@ -411,8 +488,16 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
             action_payload = _coerce_hard_accept_after_propose(
                 action_payload, history, task_name, round_number
             )
+            if str(action_payload.get("reason", "")).startswith("Accept prior propose (hard two-step policy"):
+                forced_hard_accepts += 1
+            action_payload = _maybe_enable_treds_guardrail(
+                action_payload,
+                obs_dict,
+                task_name,
+                round_number,
+            )
             action = _to_model_action(action_payload, observation)
-            action_json = json.dumps(action.model_dump(), ensure_ascii=True)
+            action_json = _serialize_step_action(action)
 
             result = await env.step(action)
             observation = result.observation
@@ -420,7 +505,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
             done = bool(result.done)
             all_rewards.append(reward)
 
-            err_out = "null" if llm_error is None else str(llm_error)
+            err_out = _format_step_error(llm_error)
             print(
                 f'[STEP] step={round_number + 1} action={action_json} reward={reward:.2f} '
                 f'done={"true" if done else "false"} error={err_out}',
@@ -453,6 +538,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
         "total_reward": total_reward,
         "steps": round_number,
         "success": success,
+        "forced_hard_accepts": forced_hard_accepts,
         "step_rewards": all_rewards,
         "final_observation": _observation_to_dict(observation) if observation is not None else {},
     }
