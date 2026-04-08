@@ -412,7 +412,8 @@ class SMENegotiatorEnvironment(Environment):
             self._final_days = agreed_days
             self._treds_used = use_treds or self._treds_used
             self._apply_terminal_outcome_to_state(agreed_price, agreed_days, action)
-            terminal_reward = self._terminal_reward()
+            # Keep success strictly below 1.0 so no pipeline stage emits an exact endpoint score.
+            terminal_reward = min(self._terminal_reward(), 0.99)
 
             self._state.step_count += 1
             self._state.negotiation_round = self._state.step_count
