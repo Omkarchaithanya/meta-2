@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import math
 from datetime import datetime, timezone
 from random import Random
 from typing import Optional, Tuple
@@ -26,7 +27,10 @@ _STRICT_EPS = 1e-6
 
 def _strict_unit_interval(score: float) -> float:
     """Map terminal scores into the strict open interval (0, 1)."""
-    return float(min(1.0 - _STRICT_EPS, max(_STRICT_EPS, float(score))))
+    value = float(score)
+    if not math.isfinite(value):
+        return _STRICT_EPS
+    return float(min(1.0 - _STRICT_EPS, max(_STRICT_EPS, value)))
 
 
 class SMENegotiatorEnvironment(Environment):

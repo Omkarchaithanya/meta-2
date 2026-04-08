@@ -14,7 +14,10 @@ _STRICT_EPS = 1e-6
 
 def _strict_unit_interval(score: float) -> float:
     """Map any score into the strict open interval (0, 1)."""
-    return float(min(1.0 - _STRICT_EPS, max(_STRICT_EPS, float(score))))
+    value = float(score)
+    if not math.isfinite(value):
+        return _STRICT_EPS
+    return float(min(1.0 - _STRICT_EPS, max(_STRICT_EPS, value)))
 
 
 def compute_financing_npv_vs_status_quo(state: "NegotiationState") -> float:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -39,6 +40,15 @@ LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "openenv-sme-negotiator:latest"
 _PRINTED_HF_402_HINT = False
 _MAX_REASON_CHARS = 160
 _MAX_ERROR_CHARS = 240
+_STRICT_EPS = 1e-6
+
+
+def _strict_unit_interval(score: float) -> float:
+    """Clamp scores to the strict open interval (0, 1)."""
+    value = float(score)
+    if not math.isfinite(value):
+        return _STRICT_EPS
+    return float(min(1.0 - _STRICT_EPS, max(_STRICT_EPS, value)))
 
 
 def _is_hf_inference_402(exc: BaseException) -> bool:
@@ -154,10 +164,15 @@ def _format_step_error(llm_error: str | None) -> str:
     return json.dumps(_clip_ascii_text(llm_error, _MAX_ERROR_CHARS), ensure_ascii=True)
 
 
+def _format_score_for_log(score: float) -> str:
+    """Format score safely so strict-open values are never displayed as 0.00/1.00."""
+    return f"{_strict_unit_interval(score):.6f}"
+
+
 def _format_end_line(success: bool, steps: int, rewards: List[float]) -> str:
     return (
         f'[END] success={"true" if success else "false"} steps={steps} '
-        f'rewards={",".join(f"{r:.2f}" for r in rewards)}'
+        f'rewards={",".join(_format_score_for_log(r) for r in rewards)}'
     )
 
 
@@ -593,7 +608,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
     forced_hard_accepts = 0
     result: Any = None
     observation: Any = None
-    final_score = 0.0
+    final_score = _strict_unit_interval(0.0)
     last_valid_proposal: Dict[str, Any] | None = None
 
     try:
@@ -678,7 +693,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
 
             err_out = _format_step_error(llm_error)
             print(
-                f'[STEP] step={round_number + 1} action={action_json} reward={reward:.2f} '
+                f'[STEP] step={round_number + 1} action={action_json} reward={_format_score_for_log(reward)} '
                 f'done={"true" if done else "false"} error={err_out}',
                 flush=True,
             )
@@ -688,7 +703,7 @@ async def run_episode(env: EnvClient, difficulty: str, seed: int) -> Dict[str, A
 
             round_number += 1
 
-        final_score = float(result.reward or 0.0)
+        final_score = _strict_unit_interval(float(result.reward or 0.0))
         meta = getattr(result.observation, "metadata", None) or {}
         if isinstance(meta, dict) and "success" in meta:
             success = bool(meta["success"])
